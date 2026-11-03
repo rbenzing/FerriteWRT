@@ -1,0 +1,2 @@
+# These files run inside a Linux container: never convert them to CRLF on Windows.
+* text=auto eol=lf

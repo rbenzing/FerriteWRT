@@ -1,0 +1,117 @@
+# FerriteWRT architecture
+
+FerriteWRT is a Rust router firmware for the GL.iNet Flint 2 (GL-MT6000, MediaTek
+MT7986A / Filogic 830). It reuses the OpenWrt tree only for what cannot sensibly be
+rewritten (the Linux kernel, its drivers, the boot chain and image packaging) and
+replaces OpenWrt's entire C userspace control plane with Rust.
+
+## Scope boundary (what is Rust, what is kept)
+
+| Layer | OpenWrt component | FerriteWRT | Reason |
+|---|---|---|---|
+| Kernel + drivers (mt76, mtk_eth_soc, MT7531 DSA, EIP97) | Linux 6.18 (C) | kept, built from pinned OpenWrt tree with hardened diffconfig | not portable |
+| Boot chain | BL2 / BL31 / U-Boot FIP | kept, unmodified | not portable |
+| PID 1 / service supervision / hotplug | procd, ujail | **owr-init** | |
+| IPC bus | ubus, ubusd, libubox, rpcd | removed: single process, typed in-process API | less attack surface |
+| Configuration | uci (/etc/config/*) | **owr-config** (TOML, typed, versioned, atomic) | |
+| Network | netifd | **owr-net** (rtnetlink, declarative plan/diff/apply) | |
+| Firewall | firewall4 + ucode templates | **owr-fw** (typed ruleset -> nft text); `nft` CLI kept to load it | pure-Rust nf_tables is phase 3 |
+| Wi-Fi | wifi-scripts + hostapd | **owr-wifi** renders hostapd.conf; hostapd (C) kept and supervised | hostapd rewrite is out of scope |
+| DHCPv4/DNS | dnsmasq | kept, config rendered by Rust; owr-dns (phase 2) | |
+| IPv6 RA/DHCPv6 | odhcpd | kept (ipv6only), config rendered by Rust; phase 2 | |
+| Web UI + API | uhttpd + LuCI (Lua/JS) + rpcd ACLs | **owr-api** (axum, rustls, argon2id, RBAC, CSRF) + embedded static UI | |
+| Logging | logd/ubox | owr-init journal (bounded ring buffer + persistent) | |
+| Storage/mounts | fstools (block, mount_root) | owr-init mounts (eMMC rootfs + f2fs overlay) | |
+| Upgrade | sysupgrade + fwtool | **owr-upgrade** (verify metadata + signature, write eMMC) | phase 2 |
+| Shell | busybox ash | busybox kept for rescue console only; no shell in the control plane | phase 2 removal |
+| SSH | dropbear | optional, off by default; phase 2: russh | |
+| Package manager | opkg/apk | none: immutable, signed image | security |
+
+## Crate map
+
+```
+crates/
+  owr-common   atomic file writes, well-known paths                                 (pure)
+  owr-board    board descriptor schema (boards/*.toml), loader, validation          (pure)
+  owr-config   typed system config, defaults derived from board, atomic store       (pure)
+  owr-fw       firewall domain model -> nft ruleset text; applier (nft -f)          (pure + linux)
+  owr-wifi     wifi domain model -> hostapd.conf; radio/phy discovery               (pure + linux)
+  owr-net      network plan model; planner (desired vs. observed); rtnetlink apply  (pure + linux)
+  owr-init     PID 1: mounts, uevent, services, reaping, journal, watchdog, shutdown (linux)
+  owr-api      HTTPS API + embedded UI, auth, sessions, RBAC, audit log             (pure + linux)
+  owr-apply    maps owr-config -> fw/wifi/net plans and drives appliers             (pure + linux)
+  owr-cli      `owr` binary: validate, render, diff, apply, board                   (bin)
+build/
+  openwrt/<board>.diffconfig   minimal hardened OpenWrt config for kernel + image
+  rootfs-overlay/              files injected into the image (FILES=)
+  Dockerfile, build-image.sh   reproducible Linux build (Windows host uses Docker)
+boards/<vendor>_<model>.toml   one file per supported router
+```
+
+Dependency direction is strictly downward: `owr-cli -> owr-apply/owr-api -> {fw,wifi,net,config} -> board -> common`.
+Domain crates (fw, wifi, net) do **not** depend on owr-config; they expose their own
+plan types and owr-apply does the mapping. This keeps each crate locally reasonable
+and independently testable.
+
+## Non-negotiable engineering rules
+
+1. `#![forbid(unsafe_code)]` in every crate (workspace lint). No C or asm in the
+   dependency graph of target binaries (deny.toml bans ring, aws-lc, openssl, cc).
+2. Everything that mutates system state is **declarative and idempotent**: build the
+   desired state, observe current state, compute a diff, apply only the diff. Running
+   apply twice is a no-op the second time. Appliers return the diff they applied.
+3. **Atomic persistence**: write to a temp file in the same directory, fsync, rename,
+   fsync the directory (`owr_common::atomic_write`). Config carries a `schema` version
+   and migrations are explicit.
+4. **Fail observable**: typed errors (`thiserror`), `tracing` spans on every apply step,
+   never `unwrap`/`expect`/`panic` outside tests (clippy deny). Release builds keep
+   overflow checks on and abort on panic.
+5. Linux-only code lives behind `#[cfg(target_os = "linux")]` modules so that all pure
+   logic compiles and is tested on any host. Pure logic is the majority by design.
+6. Memory: no unbounded buffers from untrusted input (request body limits, bounded
+   journal ring, bounded netlink dumps). Secrets in `Zeroizing<_>`. Constant-time
+   comparisons for tokens (`subtle`).
+7. Security defaults: WAN input dropped, management API bound to LAN only, HTTPS only
+   (self-signed cert generated on first boot, pinnable), argon2id passwords, session
+   cookies `Secure; HttpOnly; SameSite=Strict`, CSRF double-submit token, rate limiting
+   on auth, audit log for every mutating call, no default password (first-boot setup
+   forces one, enforced strength).
+
+## Board model (owr-board)
+
+`boards/<id>.toml` is the single source of truth about the hardware (see
+`boards/glinet_gl-mt6000.toml`). The runtime reads `/etc/ferritewrt/board.toml`
+(installed from the same file). Adding a router = new TOML + new diffconfig; nothing
+else should need to change for a board that uses an already supported SoC family.
+
+## Config model (owr-config)
+
+`/etc/ferritewrt/config.toml`, schema-versioned. Sections: `system` (hostname, timezone,
+ntp, log), `users` (argon2id hashes, roles), `network` (ports -> bridges/VLANs, WAN
+proto dhcp/static/pppoe, LAN static + DHCP pool, IPv6), `wireless` (per radio: channel,
+width, country; per AP: ssid, WPA2/WPA3-SAE, isolation), `firewall` (zones, policies,
+forwardings, port forwards, rules), `dhcp` (static leases, DNS options), `services`
+(ssh, api bind). Defaults are derived from the board (e.g. every `role = "lan"` port
+joins `br-lan`). Validation is total: a config is either fully valid or rejected with
+field-path errors.
+
+## Runtime (owr-init)
+
+Boot: kernel `init=/sbin/owr-init` -> mount proc/sys/dev/run -> mount overlay
+(`PARTLABEL=rootfs_data`, f2fs, create on first boot) -> load board + config -> start
+journal -> netlink uevent listener (coldplug) -> `owr-apply` network/firewall/wifi ->
+supervise services (hostapd per radio, dnsmasq, odhcpd, owr-api) with exponential
+backoff and health checks -> pet `/dev/watchdog`. Buttons/LEDs are driven from board
+roles. Shutdown: SIGTERM services, sync, unmount, reboot/poweroff.
+
+## Build/image
+
+The OpenWrt tree at the pinned commit builds kernel + modules + kept C daemons with
+`build/openwrt/<board>.diffconfig` (CONFIG_TARGET_DEVICE_PACKAGES_... trimmed to the board,
+hardening options on: STACKPROTECTOR_STRONG, ARM64_PTR_AUTH, ARM64_BTI, INIT_ON_ALLOC/FREE,
+SECCOMP, SECURITY+LANDLOCK+YAMA, DEBUG_LIST, no DEVMEM/KCORE). The Rust binaries are
+cross-built for `aarch64-unknown-linux-musl` (static PIE) and injected via `FILES=`.
+Output: `factory.bin` and `sysupgrade.bin` compatible with the stock GL.iNet U-Boot.
+
+Convention: any test that uses `insta` must have `snapshot` in its name; `scripts/linux-tests.sh`
+skips those on Linux because snapshot paths are compiled in from the host.

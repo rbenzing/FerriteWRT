@@ -1,0 +1,186 @@
+name: release
+
+# Builds, hashes, signs and publishes a firmware release for every tag vX.Y.Z.
+# See docs/VERSIONING.md. A manual run (workflow_dispatch) performs a dry run: it
+# builds and verifies everything but publishes nothing and needs no signing key.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+    inputs:
+      board:
+        description: Board id (boards/<id>.toml)
+        default: glinet_gl-mt6000
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  BOARD: ${{ github.event.inputs.board || 'glinet_gl-mt6000' }}
+
+jobs:
+  compliance:
+    name: version compliance
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: check version, changelog, lock file
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            scripts/check-version.sh --tag "${GITHUB_REF_NAME}"
+          else
+            scripts/check-version.sh
+          fi
+      - id: v
+        run: |
+          v=$(awk '/^\[workspace\.package\]/{f=1;next} /^\[/{f=0} f && /^version *=/{gsub(/.*= *"|".*/,""); print; exit}' Cargo.toml)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ "$v" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+  verify:
+    name: tests, lints, dependency policy
+    needs: compliance
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked --target aarch64-unknown-linux-musl -- -D warnings
+      - run: cargo test --workspace --locked
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  firmware:
+    name: build firmware image (${{ needs.compliance.outputs.version }})
+    needs: [compliance, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: cache OpenWrt tree, downloads and cargo state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ferritewrt/openwrt
+            ~/.cache/ferritewrt/cargo-home
+          key: openwrt-${{ hashFiles('build/openwrt/**', 'build/Dockerfile', 'build/build-image.sh', 'Cargo.lock') }}
+          restore-keys: openwrt-
+      - name: build container
+        run: docker build -t ferritewrt-build:1 build/
+      - name: build image
+        # The image's ENTRYPOINT is build/build-image.sh; /work/* are its volume paths.
+        # Run as the runner's uid so the bind-mounted caches stay writable across runs.
+        run: |
+          mkdir -p ~/.cache/ferritewrt/openwrt ~/.cache/ferritewrt/cargo-home ~/.cache/ferritewrt/cargo-target
+          docker run --rm --init \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD:/work/ferritewrt" \
+            -v "$HOME/.cache/ferritewrt/openwrt:/work/openwrt" \
+            -v "$HOME/.cache/ferritewrt/cargo-home:/work/cargo-home" \
+            -v "$HOME/.cache/ferritewrt/cargo-target:/work/cargo-target" \
+            ferritewrt-build:1 \
+            --board "$BOARD" --version "${{ needs.compliance.outputs.version }}" --jobs "$(nproc)"
+      - name: list artifacts
+        run: ls -la build/out/images && cat build/out/images/manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ env.BOARD }}-${{ needs.compliance.outputs.version }}
+          path: build/out/images/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: sign, attest, publish
+    needs: [compliance, verify, firmware]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write        # create the GitHub release
+      id-token: write        # build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build host owr (release tooling)
+        run: cargo build --release --locked -p owr-cli
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-${{ env.BOARD }}-${{ needs.compliance.outputs.version }}
+          path: dist
+      - name: recompute hashes (manifest + sums) on the published tree
+        run: |
+          ./target/release/owr release manifest dist \
+            --version "${{ needs.compliance.outputs.version }}" --board "$BOARD" \
+            --ferritewrt-rev "${GITHUB_SHA}" $(grep -E '^openwrt:' dist/build-info.txt | awk '{print "--openwrt-rev", $2}')
+          ./target/release/owr release sums dist
+          ./target/release/owr release show dist
+      - name: sign SHA256SUMS
+        if: github.event_name == 'push'
+        env:
+          OWR_RELEASE_KEY: ${{ secrets.OWR_RELEASE_KEY }}
+        run: |
+          [ -n "$OWR_RELEASE_KEY" ] || { echo "OWR_RELEASE_KEY secret is not set"; exit 1; }
+          ./target/release/owr release sign dist
+          ./target/release/owr release verify dist --pubkey keys/release.pub
+      - name: dry-run signature check (manual run, unsigned)
+        if: github.event_name != 'push'
+        run: |
+          export OWR_RELEASE_KEY
+          OWR_RELEASE_KEY=$(./target/release/owr release keygen 2>&1 >/tmp/pub | sed -n 's/^OWR_RELEASE_KEY=//p')
+          ./target/release/owr release sign dist
+          ./target/release/owr release verify dist --pubkey "$(cat /tmp/pub)"
+          rm -f dist/SHA256SUMS.sig
+      - name: attest build provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.bin
+            dist/*.tar.gz
+            dist/manifest.json
+            dist/SHA256SUMS
+      - name: publish GitHub release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ferritewrt ${{ github.ref_name }}
+          prerelease: ${{ needs.compliance.outputs.prerelease == 'true' }}
+          generate_release_notes: false
+          body: |
+            Firmware release ${{ github.ref_name }} for `${{ env.BOARD }}`.
+
+            Verify before flashing:
+
+            ```
+            owr release verify . --pubkey keys/release.pub
+            # or: sha256sum -c SHA256SUMS
+            ```
+
+            `SHA256SUMS.sig` is an ed25519 signature over `SHA256SUMS`; the public key is
+            `keys/release.pub` in this repository. Changes are listed in `CHANGELOG.md`.
+          files: |
+            dist/*.bin
+            dist/*.tar.gz
+            dist/manifest.json
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+            dist/build-info.txt
+          fail_on_unmatched_files: true
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'push'
+        with:
+          name: dry-run-${{ env.BOARD }}-${{ needs.compliance.outputs.version }}
+          path: dist/

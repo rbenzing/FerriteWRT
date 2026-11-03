@@ -1,0 +1,106 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  compliance:
+    name: version compliance
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: scripts/check-version.sh
+
+  check:
+    name: fmt / clippy / test (host)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  deny:
+    name: dependency policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  ui:
+    name: web UI modules parse (CSP-clean, no inline code)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: syntax check every module as an ES module
+        run: |
+          set -e
+          for f in $(find crates/owr-api/ui/js -name '*.js'); do
+            cp "$f" /tmp/mod.mjs && node --check /tmp/mod.mjs || { echo "syntax error: $f"; exit 1; }
+          done
+      - name: reject inline scripts, styles and handlers
+        run: |
+          hits=$(grep -rnE 'on[a-z]+=|style="|innerHTML|eval\(|new Function' crates/owr-api/ui/index.html crates/owr-api/ui/js \
+                 | grep -vE 'content=|^[^:]+:[0-9]+:\s*(//|\*)' || true)
+          if [ -n "$hits" ]; then echo "inline code found:"; echo "$hits"; exit 1; fi
+          echo "no inline code"
+
+  cross:
+    name: router binaries (aarch64 musl, static)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked --target aarch64-unknown-linux-musl -- -D warnings
+      - run: cargo build --release --locked --target aarch64-unknown-linux-musl --workspace
+      - name: verify static, no dynamic deps, non-executable stack
+        run: |
+          sudo apt-get install -y -qq binutils-aarch64-linux-gnu
+          for b in owr-init owr-api owr-apply owr; do
+            f=target/aarch64-unknown-linux-musl/release/$b
+            echo "== $f"; file "$f"
+            if aarch64-linux-gnu-readelf -d "$f" | grep -q NEEDED; then echo "dynamic deps found"; exit 1; fi
+            if aarch64-linux-gnu-readelf -lW "$f" | grep GNU_STACK | grep -q RWE; then echo "executable stack"; exit 1; fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: owr-aarch64
+          path: |
+            target/aarch64-unknown-linux-musl/release/owr-init
+            target/aarch64-unknown-linux-musl/release/owr-api
+            target/aarch64-unknown-linux-musl/release/owr-apply
+            target/aarch64-unknown-linux-musl/release/owr
+          if-no-files-found: error
+
+  linux-tests:
+    name: Linux-only test paths (x86_64 musl)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked --target x86_64-unknown-linux-musl

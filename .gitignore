@@ -1,0 +1,6 @@
+/target
+/build/out
+/build/openwrt/.config
+**/*.orig
+/target-*
+/.playwright-mcp

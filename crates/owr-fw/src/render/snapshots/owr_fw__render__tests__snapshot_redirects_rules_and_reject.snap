@@ -1,0 +1,87 @@
+---
+source: crates/owr-fw/src/render/tests.rs
+expression: rendered(&scenario())
+---
+#!/usr/sbin/nft -f
+table inet owr
+delete table inet owr
+table inet owr {
+  flowtable ft {
+    hook ingress priority 0;
+    devices = { "eth1", "lan1", "lan2", "lan3", "lan4", "lan5" };
+    flags offload;
+  }
+
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iif lo accept
+    ct state established,related accept
+    ct state invalid drop
+    iifname { "br-lan" } jump input_lan
+    iifname { "eth1" } jump input_wan
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+    meta l4proto { tcp, udp } flow add @ft
+    ct state established,related accept
+    ct state invalid drop
+    iifname { "br-lan" } jump forward_lan
+    iifname { "eth1" } jump forward_wan
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+  }
+
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    # web
+    iifname { "eth1" } tcp dport 8080 dnat ip to 192.168.1.10:80 comment "web"
+    # game
+    iifname { "eth1" } meta l4proto { tcp, udp } th dport 27015-27020 dnat ip to 192.168.1.20:27015 comment "game"
+  }
+
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    meta nfproto ipv4 oifname { "eth1" } masquerade
+  }
+
+  chain mangle_forward {
+    type filter hook forward priority mangle; policy accept;
+    oifname { "eth1" } tcp flags syn tcp option maxseg size set rt mtu
+  }
+
+  chain input_lan {
+    accept
+  }
+
+  chain forward_lan {
+    # block v6 telnet
+    oifname { "eth1" } meta nfproto ipv6 tcp dport 23 reject comment "block v6 telnet"
+    oifname { "eth1" } accept
+    oifname { "br-lan" } accept
+  }
+
+  chain input_wan {
+    tcp flags syn meter synflood { ip saddr limit rate over 25/second burst 50 packets } drop
+    tcp flags syn meter synflood6 { ip6 saddr limit rate over 25/second burst 50 packets } drop
+    udp sport 67 udp dport 68 accept
+    ip6 daddr fe80::/10 udp dport 546 accept
+    icmp type echo-request limit rate 10/second accept
+    icmpv6 type echo-request limit rate 10/second accept
+    icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept
+    # ssh from office
+    ip saddr 203.0.113.0/24 tcp dport 22 accept comment "ssh from office"
+    # ping
+    meta nfproto ipv4 meta l4proto icmp accept comment "ping"
+    meta nfproto ipv6 meta l4proto ipv6-icmp accept comment "ping"
+    reject with icmpx type port-unreachable
+  }
+
+  chain forward_wan {
+    ip daddr 192.168.1.10 tcp dport 80 ct status dnat accept comment "web"
+    ip daddr 192.168.1.20 meta l4proto { tcp, udp } th dport 27015 ct status dnat accept comment "game"
+    oifname { "eth1" } drop
+  }
+}

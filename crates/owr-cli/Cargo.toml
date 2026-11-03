@@ -1,0 +1,42 @@
+[package]
+name = "owr-cli"
+description = "owr: command-line tool for FerriteWRT (board, config, render, check, status)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "owr"
+path = "src/main.rs"
+
+[dependencies]
+owr-common.workspace = true
+owr-board.workspace = true
+owr-config.workspace = true
+owr-fw.workspace = true
+owr-wifi.workspace = true
+owr-apply.workspace = true
+owr-init.workspace = true
+argon2.workspace = true
+base64.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+humantime.workspace = true
+rand.workspace = true
+serde.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

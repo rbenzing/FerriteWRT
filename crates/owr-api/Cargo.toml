@@ -1,0 +1,63 @@
+[package]
+build = "build.rs"
+name = "owr-api"
+description = "HTTPS management API and embedded web UI host for FerriteWRT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "owr_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "owr-api"
+path = "src/main.rs"
+
+[dependencies]
+owr-board.workspace = true
+owr-config.workspace = true
+owr-common.workspace = true
+owr-apply.workspace = true
+owr-init.workspace = true
+owr-net.workspace = true
+owr-wifi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower = { workspace = true, features = ["util"] }
+tower-http.workspace = true
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util.workspace = true
+tokio-rustls = { workspace = true, features = ["tls12", "logging"] }
+rustls.workspace = true
+rustls-graviola.workspace = true
+rustls-pki-types.workspace = true
+p256.workspace = true
+x509-cert = { workspace = true, features = ["hazmat"] }
+argon2.workspace = true
+rand.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+sha2 = { workspace = true, features = ["oid"] }
+base64.workspace = true
+include_dir.workspace = true
+mime_guess.workspace = true
+clap.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+owr-fw.workspace = true
+rtnetlink.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,190 @@
+# Board descriptor for the GL.iNet Flint 2 (GL-MT6000).
+# Source of truth: OpenWrt target/linux/mediatek/dts/mt7986a-glinet-gl-mt6000.dts,
+# target/linux/mediatek/image/filogic.mk (glinet_gl-mt6000), filogic base-files.
+# Every value here is machine-validated by the owr-board crate. Adding a new router
+# means adding a file like this one plus a build/openwrt/<id>.diffconfig.
+schema = 1
+
+[board]
+id = "glinet_gl-mt6000"
+vendor = "GL.iNet"
+model = "Flint 2 (GL-MT6000)"
+compatible = ["glinet,gl-mt6000", "mediatek,mt7986a"]
+
+[soc]
+family = "mt7986a"           # MediaTek Filogic 830
+arch = "aarch64"
+cpu = "cortex-a53"
+cores = 4
+features = ["crypto-eip97", "trng", "wed", "watchdog", "thermal-lvts", "cpufreq"]
+
+[memory]
+ram_mib = 1024
+
+[storage]
+kind = "emmc"
+device = "/dev/mmcblk0"
+root = "PARTLABEL=rootfs"
+overlay = "PARTLABEL=rootfs_data"
+overlay_fs = "f2fs"
+
+[[storage.partitions]]
+name = "u-boot-env"
+role = "bootenv"
+size = "0x80000"
+
+[[storage.partitions]]
+name = "factory"
+role = "factory"
+# Wi-Fi EEPROM (nvmem cell eeprom_factory_0) and MAC base (nvmem cell macaddr_factory_a).
+cells = [
+  { name = "eeprom", offset = "0x0", size = "0x1000" },
+  { name = "mac-base", offset = "0xa", size = "0x6" },
+]
+
+[[storage.partitions]]
+name = "kernel"
+role = "kernel"
+
+[[storage.partitions]]
+name = "fip"
+role = "bootloader"
+
+[[storage.partitions]]
+name = "rootfs"
+role = "rootfs"
+
+[[storage.partitions]]
+name = "rootfs_data"
+role = "overlay"
+
+[console]
+device = "ttyS0"
+baud = 115200
+
+[ethernet]
+# MAC derivation: gmac1 (WAN, label MAC) = factory mac-base + 0; gmac0 (LAN side) = mac-base + 2.
+mac_source = "factory:mac-base"
+
+[ethernet.switch]
+driver = "mt7531"
+dsa = true
+cpu_port = 6
+cpu_netdev = "eth0"
+cpu_link_mbps = 2500
+
+[[ethernet.ports]]
+name = "wan"
+netdev = "eth1"
+role = "wan"
+speed_mbps = 2500
+phy = { kind = "realtek-c45", mdio_addr = 1 }
+mac_offset = 0
+
+[[ethernet.ports]]
+name = "lan1"
+netdev = "lan1"
+role = "lan"
+speed_mbps = 2500
+switch_port = 5
+phy = { kind = "realtek-c45", mdio_addr = 7 }
+mac_offset = 2
+
+[[ethernet.ports]]
+name = "lan2"
+netdev = "lan2"
+role = "lan"
+speed_mbps = 1000
+switch_port = 0
+mac_offset = 2
+
+[[ethernet.ports]]
+name = "lan3"
+netdev = "lan3"
+role = "lan"
+speed_mbps = 1000
+switch_port = 1
+mac_offset = 2
+
+[[ethernet.ports]]
+name = "lan4"
+netdev = "lan4"
+role = "lan"
+speed_mbps = 1000
+switch_port = 2
+mac_offset = 2
+
+[[ethernet.ports]]
+name = "lan5"
+netdev = "lan5"
+role = "lan"
+speed_mbps = 1000
+switch_port = 3
+mac_offset = 2
+
+[wifi]
+driver = "mt7915e"
+eeprom = "factory:eeprom"
+# Wi-Fi MACs: factory offset 0x04 for PHY0, +1 for PHY1 (filogic 11_fix_wifi_mac).
+mac_source = "factory:0x04"
+firmware = [
+  "mediatek/mt7986_wa.bin",
+  "mediatek/mt7986_wm.bin",
+  "mediatek/mt7986_wm_mt7975.bin",
+  "mediatek/mt7986_rom_patch.bin",
+  "mediatek/mt7986_rom_patch_mt7975.bin",
+  "mediatek/mt7986_wo_0.bin",
+  "mediatek/mt7986_wo_1.bin",
+]
+
+[[wifi.radios]]
+id = "radio0"
+phy_index = 0
+band = "2g"
+max_width_mhz = 40
+standards = ["n", "ax"]
+mac_offset = 0
+
+[[wifi.radios]]
+id = "radio1"
+phy_index = 1
+band = "5g"
+max_width_mhz = 160
+standards = ["n", "ac", "ax"]
+mac_offset = 1
+
+[[leds]]
+name = "blue:run"
+gpio = 38
+active_low = true
+roles = ["boot", "failsafe"]
+
+[[leds]]
+name = "white:system"
+gpio = 37
+active_low = true
+roles = ["running", "upgrade"]
+
+[[buttons]]
+name = "reset"
+gpio = 9
+active_low = true
+keycode = "KEY_RESTART"
+short_press = "reboot"
+long_press_secs = 5
+long_press = "factory-reset"
+
+[usb]
+controllers = [{ version = "3.0", vbus_gpio = 24 }]
+
+[openwrt]
+target = "mediatek"
+subtarget = "filogic"
+profile = "glinet_gl-mt6000"
+kernel_modules = [
+  "kmod-mt7915e", "kmod-mt7986-firmware", "kmod-crypto-hw-safexcel",
+  "kmod-usb3", "kmod-leds-gpio", "kmod-input-gpio-keys", "kmod-input-evdev", "kmod-fs-f2fs",
+  "kmod-nft-core", "kmod-nft-nat", "kmod-nft-offload", "kmod-nft-fib",
+]
+firmware_packages = ["mt7986-wo-firmware"]
+images = ["factory.bin", "sysupgrade.bin"]

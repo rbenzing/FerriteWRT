@@ -1,0 +1,93 @@
+---
+source: crates/owr-apply/src/tests.rs
+expression: "f::render(&p.fw).unwrap()"
+---
+#!/usr/sbin/nft -f
+table inet owr
+delete table inet owr
+table inet owr {
+  flowtable ft {
+    hook ingress priority 0;
+    devices = { "eth1", "lan1", "lan2", "lan3", "lan4.20", "lan5" };
+    flags offload;
+  }
+
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iif lo accept
+    ct state established,related accept
+    ct state invalid drop
+    iifname { "br-lan" } jump input_lan
+    iifname { "eth1" } jump input_wan
+    iifname { "br-guest" } jump input_guest
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+    meta l4proto { tcp, udp } flow add @ft
+    ct state established,related accept
+    ct state invalid drop
+    iifname { "br-lan" } jump forward_lan
+    iifname { "eth1" } jump forward_wan
+    iifname { "br-guest" } jump forward_guest
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+  }
+
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+  }
+
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    meta nfproto ipv4 oifname { "eth1" } masquerade
+  }
+
+  chain mangle_forward {
+    type filter hook forward priority mangle; policy accept;
+    oifname { "eth1" } tcp flags syn tcp option maxseg size set rt mtu
+  }
+
+  chain input_lan {
+    accept
+  }
+
+  chain forward_lan {
+    oifname { "eth1" } accept
+    oifname { "br-guest" } accept
+    oifname { "br-lan" } accept
+  }
+
+  chain input_wan {
+    tcp flags syn meter synflood { ip saddr limit rate over 25/second burst 50 packets } drop
+    tcp flags syn meter synflood6 { ip6 saddr limit rate over 25/second burst 50 packets } drop
+    udp sport 67 udp dport 68 accept
+    ip6 daddr fe80::/10 udp dport 546 accept
+    icmp type echo-request limit rate 10/second accept
+    icmpv6 type echo-request limit rate 10/second accept
+    icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept
+    drop
+  }
+
+  chain forward_wan {
+    oifname { "eth1" } drop
+  }
+
+  chain input_guest {
+    # guest-dhcp
+    udp dport 67-68 accept comment "guest-dhcp"
+    # guest-dns
+    meta l4proto { tcp, udp } th dport 53 accept comment "guest-dns"
+    # guest-icmp
+    meta nfproto ipv4 meta l4proto icmp accept comment "guest-icmp"
+    meta nfproto ipv6 meta l4proto ipv6-icmp accept comment "guest-icmp"
+    drop
+  }
+
+  chain forward_guest {
+    oifname { "eth1" } accept
+    oifname { "br-guest" } accept
+  }
+}

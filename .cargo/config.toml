@@ -1,0 +1,20 @@
+# Cross-compilation for the router (aarch64, static musl, PIE, no C toolchain needed).
+# Only pure-Rust dependencies are allowed in the dependency graph of target binaries.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = [
+  "-C", "target-feature=+crt-static",
+  "-C", "link-self-contained=yes",
+  "-C", "relocation-model=pie",
+  "-C", "link-arg=-zrelro",
+  "-C", "link-arg=-znow",
+  "-C", "link-arg=-znoexecstack",
+]
+
+[alias]
+xbuild = "build --release --target aarch64-unknown-linux-musl --workspace"
+
+# Linux-side test builds from a Windows host (run the binaries in WSL): same self-contained link.
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-self-contained=yes"]

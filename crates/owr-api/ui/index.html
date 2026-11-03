@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>FerriteWRT</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <a class="skip" id="skip" href="#main">Skip to content</a>
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="#/" aria-label="FerriteWRT home"><svg class="lockup" width="92" height="22" role="img" aria-label="FerriteWRT"><use href="/icons.svg#i-brand-min"></use></svg></a>
+      <span class="topbar-host" id="hostname"></span>
+      <span class="topbar-user" id="user"></span>
+      <button class="btn ghost small" id="logout" type="button" hidden>Sign out</button>
+    </header>
+    <nav id="nav" aria-label="Main"></nav>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <div id="dirtybar" class="dirtybar" role="region" aria-label="Unsaved changes" aria-live="polite" hidden></div>
+  <div id="announcer" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <noscript><p class="banner error">This interface needs JavaScript enabled.</p></noscript>
+</body>
+</html>

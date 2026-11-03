@@ -1,0 +1,99 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-2.0-only"
+repository = "https://github.com/rbenzing/FerriteWRT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
+arithmetic_side_effects = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+
+[workspace.dependencies]
+# Internal
+owr-common = { path = "crates/owr-common" }
+owr-board = { path = "crates/owr-board" }
+owr-config = { path = "crates/owr-config" }
+owr-net = { path = "crates/owr-net" }
+owr-fw = { path = "crates/owr-fw" }
+owr-wifi = { path = "crates/owr-wifi" }
+owr-init = { path = "crates/owr-init" }
+owr-api = { path = "crates/owr-api" }
+owr-apply = { path = "crates/owr-apply" }
+# External: pure Rust only (see deny.toml). Pin minor versions.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi", "registry"] }
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "net", "fs", "process", "signal", "sync", "time", "io-util"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "form", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["set-header", "limit", "timeout", "trace"] }
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1"] }
+tokio-rustls = { version = "0.26", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "logging"] }
+rustls-graviola = "0.2"
+rustls-pemfile = "2"
+p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8"] }
+x509-cert = { version = "0.3", features = ["builder", "pem"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.9"
+subtle = "2"
+zeroize = { version = "1", features = ["derive"] }
+sha2 = "0.11"
+hmac = "0.12"
+base64 = "0.22"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core", "zeroize"] }
+hex = "0.4"
+serde_path_to_error = "0.1"
+password-hash = { version = "0.5", default-features = false }
+rustix = { version = "1.0", features = ["fs", "process", "mount", "net", "pipe", "event", "system", "thread", "time", "stdio"] }
+socket2 = { version = "0.6", features = ["all"] }
+rtnetlink = "0.23"
+netlink-packet-route = "0.33"
+netlink-packet-core = "0.9"
+netlink-sys = "0.9"
+futures-util = "0.3"
+ipnet = { version = "2", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+include_dir = "0.7"
+mime_guess = "2"
+humantime = "2"
+tempfile = "3"
+proptest = "1"
+insta = "1"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+overflow-checks = true
+debug-assertions = false
+
+[profile.dev]
+overflow-checks = true

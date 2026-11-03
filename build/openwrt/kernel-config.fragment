@@ -1,0 +1,115 @@
+# ferritewrt extra kernel options (Linux 6.18, shared by every board).
+#
+# How it is consumed (verified in the OpenWrt tree, include/target.mk:178):
+#   LINUX_KCONFIG_LIST = generic/config-6.18 + <target>/config-6.18
+#                      + <subtarget>/config-6.18 + $(TOPDIR)/env/kernel-config
+# build-image.sh copies this file to <openwrt>/env/kernel-config. It is the LAST
+# file merged, so it overrides the generic and filogic defaults. kconfig.pl then
+# appends the CONFIG_KERNEL_* values of the OpenWrt .config AFTER this fragment
+# (include/kernel-defaults.mk:115-123), so those win on a conflict. To keep one
+# source of truth, anything OpenWrt exposes as a CONFIG_KERNEL_* knob lives in
+# build/openwrt/<board>.diffconfig and is NOT repeated here: SECCOMP, SECURITY,
+# SECURITY_NETWORK, DEVMEM, KEXEC, KALLSYMS, CGROUPS, NAMESPACES, USER_NS.
+#
+# Two OpenWrt behaviours to know about:
+#  * Kernel configure aborts on any newly visible but unset symbol
+#    (FAIL_ON_UNCONFIGURED, target/linux/generic/hack-6.18/205-*.patch). If a
+#    symbol below exposes new prompts, the build log names them: add them here.
+#  * build-image.sh re-checks every line of this file against the final kernel
+#    .config (Kconfig silently drops options whose dependencies are not met).
+#
+# Never begin a comment with the CONFIG_ prefix: kconfig readers parse lines that
+# look like "# CONFIG_X is not set".
+#
+# Marked [perf] = measurable cost on a 4x Cortex-A53 router; revisit with data.
+
+# --- stack and control-flow protection ---------------------------------------
+# Also derived from CONFIG_KERNEL_CC_STACKPROTECTOR_STRONG in the diffconfig.
+CONFIG_STACKPROTECTOR=y
+CONFIG_STACKPROTECTOR_STRONG=y
+# Pointer authentication and BTI. The MT7986 Cortex-A53 is Armv8.0 and has neither
+# feature in hardware: the instructions run as NOPs, so on this SoC there is no
+# protection and a small code-size cost. Kept so other boards of the family (A55,
+# A73) get it with no extra work.
+CONFIG_ARM64_PTR_AUTH=y
+CONFIG_ARM64_PTR_AUTH_KERNEL=y
+CONFIG_ARM64_BTI=y
+CONFIG_ARM64_BTI_KERNEL=y
+
+# --- memory initialisation and heap hardening --------------------------------
+# [perf] zero every page/slab allocation (skb allocations hit this on the data path).
+CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
+# [perf] zero on free: roughly doubles the zeroing cost, so off. Can still be turned
+# on at runtime with init_on_free=1 on the kernel command line.
+# CONFIG_INIT_ON_FREE_DEFAULT_ON is not set
+# Zero-initialise all stack variables (cheap, kills uninitialised-stack leaks).
+CONFIG_INIT_STACK_ALL_ZERO=y
+# Pinned although OpenWrt already sets them, so an upstream change cannot weaken us.
+CONFIG_SLAB_FREELIST_HARDENED=y
+CONFIG_SLAB_FREELIST_RANDOM=y
+# Randomises the page allocator free lists. Believed to be opt-in at run time via
+# page_alloc.shuffle=1 on the command line (mm/shuffle.c); the GL-MT6000 DTS does not
+# set it, so this is compiled in but dormant until bootargs are extended (phase 2).
+CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
+CONFIG_RANDOMIZE_BASE=y
+CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT=y
+CONFIG_HARDENED_USERCOPY=y
+CONFIG_FORTIFY_SOURCE=y
+CONFIG_STRICT_KERNEL_RWX=y
+CONFIG_STRICT_MODULE_RWX=y
+
+# --- corruption detection -----------------------------------------------------
+# [perf] full linked-list integrity checks (small, on top of LIST_HARDENED).
+CONFIG_DEBUG_LIST=y
+CONFIG_LIST_HARDENED=y
+# Oops/BUG on detected data corruption instead of continuing with bad state.
+CONFIG_BUG_ON_DATA_CORRUPTION=y
+
+# --- sandboxing primitives for owr-init / owr-api ----------------------------
+# Implied by CONFIG_KERNEL_SECCOMP in the diffconfig; stated so it is verified.
+CONFIG_SECCOMP_FILTER=y
+CONFIG_SECURITY_LANDLOCK=y
+CONFIG_SECURITY_YAMA=y
+# Only these LSMs are stacked (the capability LSM is always first). This replaces
+# OpenWrt's "lockdown,yama,loadpin,safesetid,integrity".
+CONFIG_LSM="landlock,yama"
+# Make the eBPF JIT mandatory so the interpreter (Spectre gadget) is never used.
+CONFIG_BPF_JIT_ALWAYS_ON=y
+
+# --- attack-surface reduction -------------------------------------------------
+# DEVMEM is switched off in the diffconfig (CONFIG_KERNEL_DEVMEM). DEVKMEM is not
+# listed: that option was removed from Linux in 5.13.
+# No /proc/kcore (a read-only window onto kernel memory).
+# CONFIG_PROC_KCORE is not set
+# No pseudo-terminals from the legacy BSD ptys (already off upstream; pinned).
+# CONFIG_LEGACY_PTYS is not set
+# The kernel must never fall back to a userspace firmware helper. Calibration data
+# comes from nvmem cells and blobs from /lib/firmware (see the GL-MT6000 DTS).
+# CONFIG_FW_LOADER_USER_HELPER is not set
+
+# --- loadable modules ---------------------------------------------------------
+# MODULE_SIG is deliberately NOT enabled (TODO phase 2). OpenWrt copies .ko files
+# from the build tree (include/kernel.mk, "$(CP) -L $mod") and never runs
+# modules_install, which is where Kbuild signs modules. With MODULE_SIG_FORCE every
+# module (mt76, nft, ...) would be rejected and the router would boot with no Wi-Fi
+# and no firewall. The real fix is to build all required drivers in (=y) and set
+# MODULES=n, or to add a signing step to the image build.
+
+# --- init, input, storage -----------------------------------------------------
+# Kernel runs this first; falls back to /sbin/init (a symlink to owr-init) if it fails.
+CONFIG_DEFAULT_INIT="/sbin/owr-init"
+# Buttons: in-kernel gpio-keys + evdev, built in, so owr-init reads /dev/input/eventN
+# (the OpenWrt gpio-button-hotplug module is deselected in the diffconfig; it binds
+# the same gpio-keys DT node and the two must not coexist).
+CONFIG_INPUT=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_KEYBOARD_GPIO=y
+# Overlay (rootfs_data) filesystem and its upper layer. Already built in upstream
+# (generic and filogic config); pinned because owr-init depends on both.
+CONFIG_F2FS_FS=y
+CONFIG_OVERLAY_FS=y
+# Hardware watchdog: owr-init pets /dev/watchdog. Upstream builds in the MediaTek
+# driver (CONFIG_MEDIATEK_WATCHDOG=y); pinned.
+CONFIG_WATCHDOG=y
+CONFIG_MEDIATEK_WATCHDOG=y
