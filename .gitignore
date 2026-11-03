@@ -4,3 +4,4 @@
 **/*.orig
 /target-*
 /.playwright-mcp
+/build/out-run.log
