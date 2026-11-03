@@ -1,0 +1,10 @@
+# Keep line endings deterministic: everything text is LF in the repo and in the working
+# tree. Shell scripts are executed inside Docker and under WSL, where CRLF breaks them.
+* text=auto eol=lf
+*.sh text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.svg text eol=lf
+*.png binary
+*.bin binary
