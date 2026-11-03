@@ -17,6 +17,11 @@ on:
 permissions:
   contents: read
 
+# One release run per tag; a re-pushed tag supersedes the run in flight.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   BOARD: ${{ github.event.inputs.board || 'glinet_gl-mt6000' }}
@@ -106,6 +111,12 @@ jobs:
     name: sign, attest, publish
     needs: [compliance, verify, firmware]
     runs-on: ubuntu-24.04
+    # The signing seed lives in the "Release" environment's secrets (OWR_RELEASE_KEY).
+    # Environment secrets are only visible to jobs that name the environment, and the
+    # environment is where protection rules (required reviewers) belong.
+    environment:
+      name: Release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     permissions:
       contents: write        # create the GitHub release
       id-token: write        # build provenance attestation

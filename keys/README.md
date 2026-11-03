@@ -10,8 +10,10 @@ The private key is never stored in this repository. Create a pair once:
 owr release keygen > keys/release.pub        # prints OWR_RELEASE_KEY=<hex> to stderr
 ```
 
-Put the printed seed into the GitHub Actions secret `OWR_RELEASE_KEY` (repository
-settings, Secrets and variables, Actions) and commit `keys/release.pub`. Store the seed
+Put the printed seed into the secret `OWR_RELEASE_KEY` of the GitHub environment named
+`Release` (repository settings, Environments; the publish job of `release.yml` runs in that
+environment) and commit `keys/release.pub`. Keep it a secret, never an environment
+variable: variables are printed in logs. Store the seed
 in a password manager as well; losing it means every device must be re-keyed with a
 release signed by the old key.
 
