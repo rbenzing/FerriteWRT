@@ -6,6 +6,19 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-03
+
+First published release; the `v0.1.0` tag never produced one because its workflow
+failed before signing.
+
+### Fixed
+- Release workflow: the publish job runs in the `Release` environment, one run per tag,
+  and the firmware build writes its log tail to the job summary when it fails.
+- Shell scripts carry the executable bit (version compliance could not run on Linux).
+- Audit rate-limit integration test no longer depends on argon2 finishing four
+  verifications within a second.
+- CI test jobs report failing tests as annotations.
+
 ## [0.1.0] - 2026-11-03
 
 First tagged release. Nothing in it has run on hardware yet; the images are for the
