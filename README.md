@@ -19,7 +19,7 @@
 
 🔒 **Secure by default** • 🦀 **Rust, no unsafe** • 📦 **Signed, hash-verified releases** • 🧭 **One config file**
 
-[Features](#-features) • [Architecture](#%EF%B8%8F-architecture) • [Releases](#-releases) • [Developing](#%EF%B8%8F-developing) • [Adding a router](#-adding-another-router) • [Status](#-status)
+[Features](#-features) • [Architecture](#-architecture) • [Releases](#-releases) • [Developing](#-developing) • [Adding a router](#-adding-another-router) • [Status](#-status)
 
 </div>
 
