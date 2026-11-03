@@ -6,6 +6,8 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-03
+
 ### Added
 - Router porting: `docs/PORTING.md` (procedure, support limits, where every board field
   comes from in OpenWrt), `scripts/openwrt-device-facts.sh` (support verdict and every
@@ -28,8 +30,15 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ### Fixed
 - `boards/glinet_gl-mt6000.toml` listed `kmod-fs-f2fs`, which the build never selected
   (f2fs is built into the kernel).
+- Kernel fragment: `INIT_STACK_ALL_ZERO` now takes effect (OpenWrt's generic config chose
+  `INIT_STACK_NONE` in the same choice, which won); `ARM64_BTI_KERNEL` is dropped because
+  Linux 6.18 makes it unavailable with GCC. The 0.1.2 firmware build stopped on both.
+- Release workflow saves the OpenWrt build cache even when the build fails, so a later
+  attempt does not rebuild the toolchain.
 
 ## [0.1.2] - 2026-11-03
+
+Not published: the firmware build failed at the kernel config check fixed in 0.2.0.
 
 ### Fixed
 - OpenWrt diffconfig: select `input-support`, which gates `kmod-input-evdev` in the

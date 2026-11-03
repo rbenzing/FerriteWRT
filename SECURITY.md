@@ -46,7 +46,8 @@ kernel or the kept C daemons, and side channels on the SoC.
   integer overflow checks and abort on panic; input sizes are bounded everywhere
   (HTTP bodies, netlink dumps, journal, hostapd replies).
 - **Kernel hardening** (see `build/openwrt/kernel-config.fragment`): stack protector
-  strong, ARM64 pointer authentication and BTI, init-on-alloc, seccomp, Landlock +
+  strong, ARM64 pointer authentication and userspace BTI, zeroed stack variables,
+  init-on-alloc, seccomp, Landlock +
   Yama, hardened usercopy/freelists, KASLR, no `/dev/mem`, no `/proc/kcore`, no kexec.
 - **No shell in the control plane**: nothing in FerriteWRT spawns a shell or interprets
   strings as commands; daemons are exec'd directly with cleared environments.

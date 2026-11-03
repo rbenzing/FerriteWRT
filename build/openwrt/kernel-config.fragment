@@ -33,12 +33,13 @@ CONFIG_STACKPROTECTOR=y
 CONFIG_STACKPROTECTOR_STRONG=y
 # Pointer authentication and BTI. The MT7986 Cortex-A53 is Armv8.0 and has neither
 # feature in hardware: the instructions run as NOPs, so on this SoC there is no
-# protection and a small code-size cost. Kept so other boards of the family (A55,
-# A73) get it with no extra work.
+# protection and a small code-size cost. Kept so newer cores (Armv8.3+/v8.5+) get it
+# with no extra work. BTI for the kernel itself (ARM64_BTI_KERNEL) is not listed: in
+# Linux 6.18 it "depends on !CC_IS_GCC" (GCC bug 106671) and OpenWrt builds with GCC,
+# so it can never be enabled; ARM64_BTI still enables BTI for userspace.
 CONFIG_ARM64_PTR_AUTH=y
 CONFIG_ARM64_PTR_AUTH_KERNEL=y
 CONFIG_ARM64_BTI=y
-CONFIG_ARM64_BTI_KERNEL=y
 
 # --- memory initialisation and heap hardening --------------------------------
 # [perf] zero every page/slab allocation (skb allocations hit this on the data path).
@@ -46,8 +47,11 @@ CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
 # [perf] zero on free: roughly doubles the zeroing cost, so off. Can still be turned
 # on at runtime with init_on_free=1 on the kernel command line.
 # CONFIG_INIT_ON_FREE_DEFAULT_ON is not set
-# Zero-initialise all stack variables (cheap, kills uninitialised-stack leaks).
+# Zero-initialise all stack variables (cheap, kills uninitialised-stack leaks). This is
+# a choice; OpenWrt's generic config picks INIT_STACK_NONE, and its config merge sorts
+# symbols so NONE would be read last and win: unset it explicitly.
 CONFIG_INIT_STACK_ALL_ZERO=y
+# CONFIG_INIT_STACK_NONE is not set
 # Pinned although OpenWrt already sets them, so an upstream change cannot weaken us.
 CONFIG_SLAB_FREELIST_HARDENED=y
 CONFIG_SLAB_FREELIST_RANDOM=y

@@ -75,13 +75,17 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-      - name: cache OpenWrt tree, downloads and cargo state
-        uses: actions/cache@v4
+      # Restore and save are separate so the cache is saved even when the build fails:
+      # the toolchain and kernel take about an hour and a failure after them (a config
+      # check, a package) should not cost that hour again. Each run saves under its own
+      # key; restore takes the newest. The OpenWrt build is incremental on that tree.
+      - name: restore OpenWrt tree, downloads and cargo state
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/ferritewrt/openwrt
             ~/.cache/ferritewrt/cargo-home
-          key: openwrt-${{ hashFiles('build/openwrt/**', 'build/Dockerfile', 'build/build-image.sh', 'Cargo.lock') }}
+          key: openwrt-${{ github.run_id }}
           restore-keys: openwrt-
       - name: free runner disk space (OpenWrt builds need ~25 GB)
         run: |
@@ -109,6 +113,16 @@ jobs:
             ferritewrt-build:1 \
             --board "$BOARD" --version "${{ needs.compliance.outputs.version }}" --jobs "$(nproc)" \
             2>&1 | tee build/out-run.log || scripts/ci-tail.sh build/out-run.log "firmware build"
+      - name: save OpenWrt tree, downloads and cargo state (also after a failure)
+        if: always()
+        # A tree over the cache size limit fails to save; that must not fail the release.
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/ferritewrt/openwrt
+            ~/.cache/ferritewrt/cargo-home
+          key: openwrt-${{ github.run_id }}
       - name: list artifacts
         run: ls -la build/out/images && cat build/out/images/manifest.json
       - uses: actions/upload-artifact@v4

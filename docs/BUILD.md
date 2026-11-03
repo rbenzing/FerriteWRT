@@ -125,7 +125,8 @@ option, `[perf]` marks costly ones), `kernel-<target>.fragment` for options of o
 target, and the `CONFIG_KERNEL_*` lines of `common.diffconfig`. The fragments are merged
 through `<openwrt>/env/kernel-config` (`include/target.mk:178`), after the generic and target
 configs; there is no `FILES=` make variable, so the overlay is synced into `<openwrt>/files`
-instead. PAC/BTI are enabled but the reference board's Cortex-A53 has neither.
+instead. Pointer authentication (kernel and user) and userspace BTI are enabled, but the
+reference board's Cortex-A53 has neither; kernel BTI is impossible with GCC in Linux 6.18.
 
 ## Adding another board
 
