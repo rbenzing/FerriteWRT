@@ -135,6 +135,10 @@ CONFIG_PACKAGE_kmod-nft-fib=y
 # exercises; they install nothing because the drivers are built in.
 CONFIG_PACKAGE_kmod-input-gpio-keys=y
 CONFIG_PACKAGE_kmod-input-evdev=y
+# kmod-input-evdev depends on input-support (package/system/hardware-support): the
+# "input" group (gid 41) and a procd hotplug rule for evdev nodes. The rule is inert
+# without procd; the group is harmless. Without it the evdev symbol is hidden.
+CONFIG_PACKAGE_input-support=y
 # OpenWrt's gpio-button-hotplug is the mediatek target default (target/linux/mediatek/
 # Makefile) and would bind the same gpio-keys node, so it is removed.
 # CONFIG_PACKAGE_kmod-gpio-button-hotplug is not set
