@@ -6,10 +6,18 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-03
+
+### Fixed
+- OpenWrt diffconfig: select `input-support`, which gates `kmod-input-evdev` in the
+  pinned tree; `make defconfig` silently dropped the module before.
+- CI verifies the diffconfig on every push and names any setting that did not take
+  effect; the firmware job frees runner disk space before building.
+
 ## [0.1.1] - 2026-11-03
 
-First published release; the `v0.1.0` tag never produced one because its workflow
-failed before signing.
+Not published: the firmware build failed on the diffconfig problem fixed in 0.1.2.
+The `v0.1.0` tag never produced a release either (workflow failed before signing).
 
 ### Fixed
 - Release workflow: the publish job runs in the `Release` environment, one run per tag,
