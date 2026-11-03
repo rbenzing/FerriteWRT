@@ -4,7 +4,7 @@
 #
 #   build-image.sh --board glinet_gl-mt6000 [--openwrt-dir /work/openwrt]
 #                  [--openwrt-rev c1bd42c934] [--openwrt-repo URL] [--jobs N]
-#                  [--skip-rust] [--version <semver>]
+#                  [--skip-rust] [--version <semver>] [--config-only]
 #
 # Idempotent: every step converges on the same state when re-run, and unchanged
 # inputs do not trigger rebuilds (the OpenWrt tree keeps dl/, staging_dir, build_dir).
@@ -21,6 +21,7 @@ OPENWRT_REV=c1bd42c934            # pinned OpenWrt commit (kernel 6.18)
 OPENWRT_REPO=https://github.com/openwrt/openwrt.git
 JOBS=$(nproc)
 SKIP_RUST=0
+CONFIG_ONLY=0                     # stop after .config + kernel fragment (CI diffconfig check)
 VERSION=""                        # default: [workspace.package] version of Cargo.toml
 RUST_TARGET=aarch64-unknown-linux-musl
 REQUIRED_BINS=(owr-init owr-api owr)   # the build fails if one is missing
@@ -53,6 +54,7 @@ while [ $# -gt 0 ]; do
     --openwrt-repo) OPENWRT_REPO=${2:?--openwrt-repo needs a value}; shift 2 ;;
     --jobs)         JOBS=${2:?--jobs needs a value}; shift 2 ;;
     --skip-rust)    SKIP_RUST=1; shift ;;
+    --config-only)  CONFIG_ONLY=1; shift ;;
     --version)      VERSION=${2:?--version needs a value}; shift 2 ;;
     -h|--help)      usage 0 ;;
     *)              printf 'unknown argument: %s\n' "$1" >&2; usage 2 ;;
@@ -202,6 +204,13 @@ stage_rootfs() {
 # verbatim in <config>; every "# CONFIG_X is not set" line must not be "=y/m/..." there.
 # Checked against the expanded config, not scripts/diffconfig.sh output, because
 # diffconfig omits symbols that merely equal their default.
+# A setting that did not survive expansion. Under GitHub Actions it is also an error
+# annotation, so the run page names it without opening the log.
+config_mismatch() { # <label> <wanted> <got>
+  printf '  %s: wanted "%s", got "%s"\n' "$1" "$2" "$3" >&2
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then printf '::error title=%s::wanted %s, got %s\n' "$1" "$2" "$3"; fi
+}
+
 check_config() {
   local expect=$1 cfg=$2 label=$3 line sym actual bad=0
   local re_set='^CONFIG_([A-Za-z0-9_+.-]+)=' re_unset='^# CONFIG_([A-Za-z0-9_+.-]+) is not set$'
@@ -211,14 +220,14 @@ check_config() {
       if ! grep -qxF -- "$line" "$cfg"; then
         sym=${BASH_REMATCH[1]}
         actual=$(grep -E -- "^(# )?CONFIG_${sym}[= ]" "$cfg" || true)
-        printf '  %s: wanted "%s", got "%s"\n' "$label" "$line" "${actual:-<absent>}" >&2
+        config_mismatch "$label" "$line" "${actual:-<absent>}"
         bad=$((bad + 1))
       fi
     elif [[ $line =~ $re_unset ]]; then
       sym=${BASH_REMATCH[1]}
       actual=$(grep -E -- "^CONFIG_${sym}=" "$cfg" || true)
       if [ -n "$actual" ]; then
-        printf '  %s: wanted "%s", got "%s"\n' "$label" "$line" "$actual" >&2
+        config_mismatch "$label" "$line" "$actual"
         bad=$((bad + 1))
       fi
     fi
@@ -377,10 +386,15 @@ summarise() {
 
 checkout_openwrt
 check_no_feeds
-if [ "$SKIP_RUST" -eq 0 ]; then build_rust; else log "skipping Rust build (--skip-rust); reusing $OUT_DIR/bin"; fi
-stage_rootfs
+if [ "$CONFIG_ONLY" -eq 1 ]; then
+  log "--config-only: skipping the Rust build and rootfs staging"
+else
+  if [ "$SKIP_RUST" -eq 0 ]; then build_rust; else log "skipping Rust build (--skip-rust); reusing $OUT_DIR/bin"; fi
+  stage_rootfs
+fi
 configure_openwrt
 install_kernel_fragment
+if [ "$CONFIG_ONLY" -eq 1 ]; then log "--config-only: .config verified; stopping before the build"; exit 0; fi
 build_openwrt
 verify_rootfs
 collect_images

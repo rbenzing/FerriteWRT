@@ -94,7 +94,7 @@ jobs:
           mkdir -p ~/.cache/ferritewrt/openwrt ~/.cache/ferritewrt/cargo-home ~/.cache/ferritewrt/cargo-target
           set -o pipefail
           docker run --rm --init \
-            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp -e GITHUB_ACTIONS \
             -v "$PWD:/work/ferritewrt" \
             -v "$HOME/.cache/ferritewrt/openwrt:/work/openwrt" \
             -v "$HOME/.cache/ferritewrt/cargo-home:/work/cargo-home" \

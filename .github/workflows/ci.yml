@@ -95,6 +95,32 @@ jobs:
             target/aarch64-unknown-linux-musl/release/owr
           if-no-files-found: error
 
+  config:
+    name: OpenWrt diffconfig survives make defconfig
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: cache the OpenWrt checkout
+        uses: actions/cache@v4
+        with:
+          path: ~/openwrt
+          key: openwrt-tree-${{ hashFiles('build/build-image.sh') }}
+          restore-keys: openwrt-tree-
+      - name: OpenWrt build prerequisites (what make defconfig needs)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential bzip2 file gawk gettext libncurses-dev libssl-dev python3 \
+            python3-setuptools rsync unzip wget zlib1g-dev
+      - name: expand the diffconfig and verify every setting took effect
+        run: build/build-image.sh --board glinet_gl-mt6000 --openwrt-dir "$HOME/openwrt" --config-only --jobs 2
+      - name: resolved config (diagnostic)
+        if: always()
+        run: |
+          if [ -f build/out/resolved.diffconfig ]; then
+            { echo "### resolved diffconfig"; echo '```'; cat build/out/resolved.diffconfig; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   linux-tests:
     name: Linux-only test paths (x86_64 musl)
     runs-on: ubuntu-24.04
