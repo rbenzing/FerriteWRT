@@ -1382,16 +1382,29 @@ async fn audit_noise_is_rate_limited_and_actions_are_kept() {
 #[tokio::test(flavor = "multi_thread")]
 async fn audit_login_failures_are_rate_limited_but_success_is_always_logged() {
     let h = harness();
+    let started = std::time::Instant::now();
     for _ in 0..4 {
         assert_eq!(
             login_as(&h.app, "admin", "wrong password!!").await.status,
             StatusCode::UNAUTHORIZED
         );
     }
+    let elapsed = started.elapsed();
     login(&h.app, "admin").await;
     let lines = h.audit_lines();
     let outcomes = |o: &str| lines.iter().filter(|l| l["outcome"] == o).count();
-    assert!((1..=2).contains(&outcomes("denied")), "{lines:?}");
+    // Denied logins are audited at most once per second per client (the exact window is
+    // unit-tested in audit.rs). Four argon2 verifications can take more than a second on
+    // a slow CI runner, so bound the expectation by the time they actually took: one
+    // line per started second, plus one for straddling a second boundary.
+    let max_denied = usize::try_from(elapsed.as_secs())
+        .unwrap_or(usize::MAX)
+        .saturating_add(2);
+    let denied = outcomes("denied");
+    assert!(
+        (1..=max_denied.min(4)).contains(&denied),
+        "{denied} denied lines after {elapsed:?}: {lines:?}"
+    );
     assert_eq!(outcomes("ok"), 1, "{lines:?}");
 }
 
