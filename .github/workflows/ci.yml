@@ -96,7 +96,7 @@ jobs:
           if-no-files-found: error
 
   config:
-    name: OpenWrt diffconfig survives make defconfig
+    name: OpenWrt config of every board survives make defconfig
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -112,14 +112,29 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             build-essential bzip2 file gawk gettext libncurses-dev libssl-dev python3 \
             python3-setuptools rsync unzip wget zlib1g-dev
-      - name: expand the diffconfig and verify every setting took effect
-        run: build/build-image.sh --board glinet_gl-mt6000 --openwrt-dir "$HOME/openwrt" --config-only --jobs 2
-      - name: resolved config (diagnostic)
+      - name: expand each board's config and verify every setting took effect
+        # Every boards/*.toml is checked, so a new board is covered without editing CI.
+        # All boards run; the step fails at the end if any did.
+        run: |
+          failed=""
+          for f in boards/*.toml; do
+            b=$(basename "$f" .toml)
+            echo "::group::$b"
+            if build/build-image.sh --board "$b" --openwrt-dir "$HOME/openwrt" --config-only --jobs 2; then
+              cp build/out/resolved.diffconfig "build/out/resolved-$b.diffconfig" 2>/dev/null || true
+            else
+              failed="$failed $b"
+            fi
+            echo "::endgroup::"
+          done
+          [ -z "$failed" ] || { echo "::error::config check failed for:$failed"; exit 1; }
+      - name: resolved configs (diagnostic)
         if: always()
         run: |
-          if [ -f build/out/resolved.diffconfig ]; then
-            { echo "### resolved diffconfig"; echo '```'; cat build/out/resolved.diffconfig; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for f in build/out/resolved-*.diffconfig; do
+            [ -f "$f" ] || continue
+            { echo "### $(basename "$f")"; echo '```'; cat "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
 
   linux-tests:
     name: Linux-only test paths (x86_64 musl)

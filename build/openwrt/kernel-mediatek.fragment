@@ -1,0 +1,10 @@
+# ferritewrt kernel options for the OpenWrt "mediatek" target (all subtargets).
+# Merged after kernel-config.fragment (see that file for how fragments are consumed
+# and verified). Only options that exist on this target belong here.
+#
+# Never begin a comment with the CONFIG_ prefix.
+
+# Hardware watchdog driver: owr-init pets /dev/watchdog and the board must reboot if
+# it stops. Upstream already builds it in (target/linux/mediatek/filogic/config-6.18);
+# pinned so an upstream change cannot silently remove it.
+CONFIG_MEDIATEK_WATCHDOG=y

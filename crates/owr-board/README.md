@@ -11,14 +11,11 @@ let embedded = owr_board::builtin("glinet_gl-mt6000")?; // Result<Board, BoardEr
 
 ## Adding a board
 
-1. Copy `boards/glinet_gl-mt6000.toml` to `boards/<vendor>_<model>.toml` and fill in every
-   section from the OpenWrt DTS, image recipe and base-files for the device.
-2. Add `build/openwrt/<id>.diffconfig` for the OpenWrt kernel/image build.
-3. In `src/lib.rs` add a `pub const <NAME>_TOML: &str = include_str!(...)` and an entry
-   `("<id>", <NAME>_TOML)` to `BUILTIN_BOARDS`.
-4. Add a test in `tests/` for the new board (port counts, speeds, radios) and run
-   `cargo test -p owr-board`. The `every_builtin_board_loads_and_id_matches` test checks that
-   the file validates and that its `board.id` equals the list key.
+The procedure, and where every field comes from in the OpenWrt tree, is in
+[docs/PORTING.md](../../docs/PORTING.md). Registration is one line in `BUILTIN_BOARDS` in
+`src/lib.rs`. `tests/repo_boards.rs` fails if a `boards/*.toml` file is not registered, if its
+`build/openwrt/<id>.diffconfig` does not select the OpenWrt device, if its module lists and
+that diffconfig disagree, or if the diffconfig repeats `common.diffconfig`.
 
 Sizes and offsets (`partitions.size`, `cells.offset`, `cells.size`) are integers or strings
 such as `"0x80000"` (exactly `[0-9]+` or `0x[0-9a-fA-F]+`: no sign, no whitespace). Unknown keys are

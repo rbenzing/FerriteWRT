@@ -23,7 +23,7 @@ JOBS=$(nproc)
 SKIP_RUST=0
 CONFIG_ONLY=0                     # stop after .config + kernel fragment (CI diffconfig check)
 VERSION=""                        # default: [workspace.package] version of Cargo.toml
-RUST_TARGET=aarch64-unknown-linux-musl
+RUST_TARGET=""                    # from [soc] arch of the board file, below
 REQUIRED_BINS=(owr-init owr-api owr)   # the build fails if one is missing
 OPTIONAL_BINS=(owr-apply)              # copied when the workspace builds it
 
@@ -83,31 +83,54 @@ if [ "$FERRITEWRT_SHA" != unknown ] && ! repo_git diff --quiet HEAD 2>/dev/null;
 OWR_BUILD_ID="${FERRITEWRT_SHA:0:10}$FERRITEWRT_DIRTY"
 
 BOARD_TOML="$REPO_ROOT/boards/$BOARD.toml"
-DIFFCONFIG="$SCRIPT_DIR/openwrt/$BOARD.diffconfig"
+# The OpenWrt .config is common.diffconfig (project policy) followed by the board's
+# diffconfig; the kernel fragment is kernel-config.fragment followed by the target's
+# kernel-<target>.fragment when there is one. See docs/PORTING.md.
+COMMON_DIFFCONFIG="$SCRIPT_DIR/openwrt/common.diffconfig"
+BOARD_DIFFCONFIG="$SCRIPT_DIR/openwrt/$BOARD.diffconfig"
 FRAGMENT="$SCRIPT_DIR/openwrt/kernel-config.fragment"
-for f in "$BOARD_TOML" "$DIFFCONFIG" "$FRAGMENT"; do
-  [ -f "$f" ] || die "missing $f (new board? see docs/BUILD.md, 'Adding another board')"
+for f in "$BOARD_TOML" "$COMMON_DIFFCONFIG" "$BOARD_DIFFCONFIG" "$FRAGMENT"; do
+  [ -f "$f" ] || die "missing $f (new board? see docs/PORTING.md)"
 done
 
-# Value of KEY in the [openwrt] table of the board file. Single-line values only.
-toml_openwrt() {
-  awk -v key="$1" '
-    /^\[/ { in_sec = ($0 ~ /^\[openwrt\][[:space:]]*(#.*)?$/); next }
+# Value of KEY in the [TABLE] table of the board file. Single-line values only.
+toml_value() { # <table> <key>
+  awk -v table="$1" -v key="$2" '
+    /^\[/ { in_sec = ($0 ~ "^\\[" table "\\][[:space:]]*(#.*)?$"); next }
     in_sec && $0 ~ "^" key "[[:space:]]*=" {
       sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*#.*$/, ""); print; exit
     }' "$BOARD_TOML" | tr -d '"[],' | xargs
 }
-TARGET=$(toml_openwrt target)
-SUBTARGET=$(toml_openwrt subtarget)
-PROFILE=$(toml_openwrt profile)
-IMAGES=$(toml_openwrt images)
+TARGET=$(toml_value openwrt target)
+SUBTARGET=$(toml_value openwrt subtarget)
+PROFILE=$(toml_value openwrt profile)
+IMAGES=$(toml_value openwrt images)
+ARCH=$(toml_value soc arch)
 for v in TARGET SUBTARGET PROFILE IMAGES; do
   [ -n "${!v}" ] || die "boards/$BOARD.toml: [openwrt] is missing a single-line '${v,,}' value"
 done
-grep -qxF "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" "$DIFFCONFIG" \
-  || die "$DIFFCONFIG does not select CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y (boards/$BOARD.toml [openwrt])"
+grep -qxF "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" "$BOARD_DIFFCONFIG" \
+  || die "$BOARD_DIFFCONFIG does not select CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y (boards/$BOARD.toml [openwrt])"
 
+# The Rust userspace and kernel-config.fragment are aarch64-only today. Other
+# architectures need a Rust target here and an arch-specific fragment split; MIPS has
+# no tier-2 Rust std for musl at all. docs/PORTING.md, "What can be supported".
+case $ARCH in
+  aarch64) RUST_TARGET=aarch64-unknown-linux-musl ;;
+  *) die "boards/$BOARD.toml: [soc] arch '$ARCH' is not supported yet (aarch64 only; see docs/PORTING.md)" ;;
+esac
+
+TARGET_FRAGMENT="$SCRIPT_DIR/openwrt/kernel-$TARGET.fragment"
 mkdir -p "$OUT_DIR"
+# The two files every later step reads: the combined diffconfig and kernel fragment.
+DIFFCONFIG="$OUT_DIR/$BOARD.combined.diffconfig"
+KERNEL_FRAGMENT="$OUT_DIR/$BOARD.kernel.fragment"
+cat "$COMMON_DIFFCONFIG" "$BOARD_DIFFCONFIG" > "$DIFFCONFIG"
+if [ -f "$TARGET_FRAGMENT" ]; then
+  cat "$FRAGMENT" "$TARGET_FRAGMENT" > "$KERNEL_FRAGMENT"
+else
+  cp "$FRAGMENT" "$KERNEL_FRAGMENT"
+fi
 trap 'rc=$?; [ "$rc" -eq 0 ] || log "build failed (exit $rc); log: $LOG"' EXIT
 
 # --- (a) OpenWrt checkout at the pinned revision ---------------------------------
@@ -258,7 +281,7 @@ configure_openwrt() {
 # (include/target.mk:178). A plain directory is enough; scripts/env is not needed.
 install_kernel_fragment() {
   install -d -m 0755 "$OPENWRT_DIR/env"
-  cmp -s "$FRAGMENT" "$OPENWRT_DIR/env/kernel-config" || cp "$FRAGMENT" "$OPENWRT_DIR/env/kernel-config"
+  cmp -s "$KERNEL_FRAGMENT" "$OPENWRT_DIR/env/kernel-config" || cp "$KERNEL_FRAGMENT" "$OPENWRT_DIR/env/kernel-config"
   log "kernel fragment installed at $OPENWRT_DIR/env/kernel-config"
 }
 
@@ -272,7 +295,7 @@ verify_kernel_config() {
           -path "*/linux-${TARGET}_${SUBTARGET}/linux-[0-9]*/.config" -printf '%T@ %p\n' 2>/dev/null \
         | sort -rn | sed -n '1s/^[^ ]* //p' || true)
   [ -n "$cfg" ] || die "kernel .config not found under $OPENWRT_DIR/build_dir"
-  { cat "$FRAGMENT"
+  { cat "$KERNEL_FRAGMENT"
     sed -n -E 's/^(# )?CONFIG_KERNEL_(.*)$/\1CONFIG_\2/p' "$DIFFCONFIG" | grep -v '^\(# \)\?CONFIG_CC_' || true
   } > "$expect"
   check_config "$expect" "$cfg" "kernel config ($cfg)"

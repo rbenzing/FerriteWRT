@@ -1,144 +1,34 @@
-# ferritewrt: minimal OpenWrt config for the GL.iNet GL-MT6000 (Flint 2).
-# Format: ./scripts/diffconfig.sh output. build-image.sh copies it to <openwrt>/.config
-# and runs "make defconfig". Pinned OpenWrt: c1bd42c934, kernel 6.18.
-#
-# Every line is checked against the expanded .config after defconfig (build-image.sh
-# fails and lists the lines that did not stick), so this file is a contract: do not
-# add a line that a package dependency would silently revert.
-# Never begin a comment with the CONFIG_ prefix (kconfig parses "# CONFIG_X is not set").
+# ferritewrt: board part of the OpenWrt config for the GL.iNet GL-MT6000 (Flint 2).
+# build-image.sh appends this to common.diffconfig (project-wide policy: images,
+# hardening, busybox, removed packages, kept daemons, nft and input modules), so only
+# what is specific to this device lives here. Every line is verified after
+# "make defconfig". See docs/PORTING.md.
+# Source: target/linux/mediatek/image/filogic.mk, define Device/glinet_gl-mt6000.
 
 # --- target / device -----------------------------------------------------------
 # One device, not TARGET_MULTI_PROFILE, so TARGET_PER_DEVICE_ROOTFS (which only exists
 # in the multi-profile menu, scripts/target-metadata.pl:287) is not applicable.
-# The profile choice defaults to openwrt_one (target.mk), so it must be set here.
+# The profile choice defaults to openwrt_one (filogic target.mk), so it must be set here.
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
 CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-mt6000=y
 
-# --- images --------------------------------------------------------------------
-# squashfs rootfs -> squashfs-factory.bin / squashfs-sysupgrade.bin. The writable
-# overlay is a separate f2fs partition created by owr-init, so no ext4 image.
-CONFIG_TARGET_ROOTFS_SQUASHFS=y
-# Separate initramfs kernel (mediatek has the separate_ramdisk feature): the safe
-# first-boot image, loaded over TFTP without touching the eMMC.
-CONFIG_TARGET_ROOTFS_INITRAMFS=y
-# CONFIG_TARGET_ROOTFS_EXT4FS is not set
-# CONFIG_TARGET_ROOTFS_EROFS is not set
-
-# --- package manager: none (immutable signed image) -----------------------------
-# The apk database in /lib/apk/db stays and doubles as the C-component inventory.
-# CONFIG_PACKAGE_apk-mbedtls is not set
-
-# --- userspace hardening (applies to every C package built) ---------------------
-CONFIG_PKG_CC_STACKPROTECTOR_STRONG=y
-# Under musl _FORTIFY_SOURCE has little effect (musl ships no fortified libc
-# functions); the flag is harmless and keeps the intent explicit.
-CONFIG_PKG_FORTIFY_SOURCE_2=y
-CONFIG_PKG_RELRO_FULL=y
-CONFIG_PKG_ASLR_PIE_ALL=y
-
-# --- kernel knobs OpenWrt exposes (see kernel-config.fragment for the rest) ------
-CONFIG_KERNEL_CC_STACKPROTECTOR_STRONG=y
-# Kernel seccomp is selected directly. USE_SECCOMP is dropped: its only extra effect
-# is pulling procd-seccomp/utrace, which belong to the replaced OpenWrt init.
-# CONFIG_USE_SECCOMP is not set
-CONFIG_KERNEL_SECCOMP=y
-# SECURITY + network hooks: base for Landlock (including its TCP rules) and Yama.
-CONFIG_KERNEL_SECURITY=y
-CONFIG_KERNEL_SECURITY_NETWORK=y
-# CONFIG_KERNEL_DEVMEM is not set
-# CONFIG_KERNEL_KEXEC is not set
-# Keep symbols so oopses are decodable.
-CONFIG_KERNEL_KALLSYMS=y
-# cgroups and namespaces: groundwork for sandboxing the Rust services later.
-CONFIG_KERNEL_CGROUPS=y
-CONFIG_KERNEL_NAMESPACES=y
-CONFIG_KERNEL_USER_NS=y
-
-# --- busybox: rescue console only ----------------------------------------------
-# CUSTOM lets individual applets be switched off (it marks the build as tainted in
-# /etc/openwrt_release, which is accurate). Only network daemons/clients and cron
-# that nothing selected here needs are removed. The full rescue-set trim is phase 2:
-# it needs an audit of what the initramfs /init script (mount, cp, switch_root, ash),
-# dnsmasq (pidof) and any retained OpenWrt shell glue still call.
-CONFIG_BUSYBOX_CUSTOM=y
-# owr-init wraps the rescue shell in `setsid -c`; keep it even if busybox is trimmed further.
-CONFIG_BUSYBOX_CONFIG_SETSID=y
-# CONFIG_BUSYBOX_CONFIG_NC is not set
-# CONFIG_BUSYBOX_CONFIG_NETMSG is not set
-# CONFIG_BUSYBOX_CONFIG_NTPD is not set
-# CONFIG_BUSYBOX_CONFIG_CROND is not set
-# CONFIG_BUSYBOX_CONFIG_CRONTAB is not set
-# CONFIG_BUSYBOX_CONFIG_BRCTL is not set
-# CONFIG_BUSYBOX_CONFIG_TRACEROUTE is not set
-# CONFIG_BUSYBOX_CONFIG_TRACEROUTE6 is not set
-# CONFIG_BUSYBOX_CONFIG_NSLOOKUP is not set
-
-# --- packages removed: nothing else in the image depends on them ----------------
-# (Checked: grep of DEPENDS across package/ and target/linux/mediatek.)
-# CONFIG_PACKAGE_dropbear is not set
-# CONFIG_PACKAGE_logd is not set
-# CONFIG_PACKAGE_urngd is not set
-# CONFIG_PACKAGE_urandom-seed is not set
-# CONFIG_PACKAGE_uci is not set
-# CONFIG_PACKAGE_uclient-fetch is not set
-# CONFIG_PACKAGE_libustream-mbedtls is not set
-# CONFIG_PACKAGE_ca-bundle is not set
-# CONFIG_PACKAGE_mtd is not set
-# CONFIG_PACKAGE_firewall4 is not set
-# CONFIG_PACKAGE_procd-ujail is not set
-#
-# NOT removable at package level (so deliberately absent from this file):
-#   procd, netifd, ubus, ubusd, ubox, fstools, fwtool, jsonfilter, ucode*
-#     package/base-files/Makefile:45-50 hard-depends on them (+netifd +fstools
-#     +fwtool +procd +jsonfilter +ucode); netifd pulls ubus/ubusd/libuci.
-#   libubox, libubus, libuci, libblobmsg-json, libucode, libjson-c
-#     linked by the kept daemons: dnsmasq (+libubus), odhcpd (+libubox +libuci
-#     +libubus), odhcp6c (+libubox +libubus), hostapd/wpad (+libubus
-#     +libblobmsg-json +libucode, hostapd Makefile:99-101).
-# They stay installed but inert: owr-init is /sbin/init and the kernel default init,
-# so procd never runs. TODO phase 2: patch base-files DEPENDS and build the kept
-# daemons without ubus. ubox also ships /sbin/kmodloader, which owr-init must call
-# to load the kmod-* modules below.
-
-# --- kept C userspace -------------------------------------------------------------
-CONFIG_PACKAGE_wpad-basic-mbedtls=y
-# Hostapd in this tree links libubus/libucode but still accepts a plain hostapd.conf,
-# which is what owr-wifi renders. No TLS library other than mbedtls is built.
-CONFIG_PACKAGE_nftables-nojson=y
-CONFIG_PACKAGE_dnsmasq=y
-CONFIG_PACKAGE_odhcpd-ipv6only=y
-CONFIG_PACKAGE_odhcp6c=y
-CONFIG_PACKAGE_ppp=y
-CONFIG_PACKAGE_ppp-mod-pppoe=y
-CONFIG_PACKAGE_e2fsprogs=y
-CONFIG_PACKAGE_f2fsck=y
-CONFIG_PACKAGE_mkf2fs=y
-CONFIG_PACKAGE_uboot-envtools=y
-# fitblk is hidden (selected through the filogic DEFAULT_PACKAGES) and is inert on
-# the GL-MT6000, whose rootfs is not a FIT image. Candidate for removal in phase 2.
-CONFIG_PACKAGE_fitblk=y
-
-# --- kernel modules and firmware (matches [openwrt] in boards/glinet_gl-mt6000.toml)
+# --- device drivers and firmware (= kernel_modules + firmware_packages of
+# boards/glinet_gl-mt6000.toml; the owr-board repo tests keep the two in sync) -----
 CONFIG_PACKAGE_kmod-mt7915e=y
 CONFIG_PACKAGE_kmod-mt7986-firmware=y
 CONFIG_PACKAGE_mt7986-wo-firmware=y
 CONFIG_PACKAGE_kmod-usb3=y
 CONFIG_PACKAGE_kmod-crypto-hw-safexcel=y
 CONFIG_PACKAGE_kmod-leds-gpio=y
-CONFIG_PACKAGE_kmod-nft-core=y
-CONFIG_PACKAGE_kmod-nft-nat=y
-CONFIG_PACKAGE_kmod-nft-offload=y
-CONFIG_PACKAGE_kmod-nft-fib=y
-# Buttons: in-kernel gpio-keys + evdev (built in, see kernel-config.fragment). The
-# kmod packages are selected only so the Kconfig closure is the one OpenWrt already
-# exercises; they install nothing because the drivers are built in.
-CONFIG_PACKAGE_kmod-input-gpio-keys=y
-CONFIG_PACKAGE_kmod-input-evdev=y
-# kmod-input-evdev depends on input-support (package/system/hardware-support): the
-# "input" group (gid 41) and a procd hotplug rule for evdev nodes. The rule is inert
-# without procd; the group is harmless. Without it the evdev symbol is hidden.
-CONFIG_PACKAGE_input-support=y
-# OpenWrt's gpio-button-hotplug is the mediatek target default (target/linux/mediatek/
-# Makefile) and would bind the same gpio-keys node, so it is removed.
-# CONFIG_PACKAGE_kmod-gpio-button-hotplug is not set
+
+# --- storage tools for the f2fs overlay on eMMC ------------------------------------
+# owr-init runs mkfs.f2fs on a blank rootfs_data; fsck and e2fsprogs for repair.
+CONFIG_PACKAGE_e2fsprogs=y
+CONFIG_PACKAGE_f2fsck=y
+CONFIG_PACKAGE_mkf2fs=y
+
+# --- target defaults kept --------------------------------------------------------
+# fitblk is hidden (selected through the filogic DEFAULT_PACKAGES) and is inert on
+# the GL-MT6000, whose rootfs is not a FIT image. Candidate for removal in phase 2.
+CONFIG_PACKAGE_fitblk=y

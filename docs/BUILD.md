@@ -26,9 +26,12 @@ dirs), `ferritewrt-cargo` and `ferritewrt-target`. The OpenWrt revision is pinne
 
 `build/build-image.sh` then: checks out OpenWrt at the pin; cross-builds the Rust workspace
 (`cargo xbuild`, aarch64-unknown-linux-musl, static PIE); stages `build/rootfs-overlay/` +
-binaries + `sbin/init -> owr-init` + `boards/<board>.toml`; expands the diffconfig and
-**fails if any line did not stick**; installs the kernel fragment; builds; then verifies the
-kernel `.config` and that the rootfs `/sbin/init` is `owr-init`. No feeds are used.
+binaries + `sbin/init -> owr-init` + `boards/<board>.toml`; expands
+`build/openwrt/common.diffconfig` followed by `build/openwrt/<board>.diffconfig` and **fails
+if any line did not stick**; installs the kernel fragments (`kernel-config.fragment`, then
+`kernel-<target>.fragment` if present); builds; then verifies the kernel `.config` and that
+the rootfs `/sbin/init` is `owr-init`. No feeds are used. `--config-only` stops after the
+config checks (CI runs that for every board on every push).
 
 ## Outputs (`build/out/`)
 
@@ -118,19 +121,17 @@ modules (or all drivers built in and `MODULES=n`; see `kernel-config.fragment`).
 
 Userspace: stack protector strong, `_FORTIFY_SOURCE=2` (little effect on musl), full RELRO,
 PIE for all packages. Kernel: see `build/openwrt/kernel-config.fragment` (one comment per
-option, `[perf]` marks costly ones) and the `CONFIG_KERNEL_*` lines of the diffconfig. The
-fragment is merged through `<openwrt>/env/kernel-config` (`include/target.mk:178`), after the
-generic and filogic configs; there is no `FILES=` make variable, so the overlay is synced
-into `<openwrt>/files` instead. PAC/BTI are enabled but the Cortex-A53 has neither.
+option, `[perf]` marks costly ones), `kernel-<target>.fragment` for options of one OpenWrt
+target, and the `CONFIG_KERNEL_*` lines of `common.diffconfig`. The fragments are merged
+through `<openwrt>/env/kernel-config` (`include/target.mk:178`), after the generic and target
+configs; there is no `FILES=` make variable, so the overlay is synced into `<openwrt>/files`
+instead. PAC/BTI are enabled but the reference board's Cortex-A53 has neither.
 
 ## Adding another board
 
-1. `boards/<id>.toml` with its `[openwrt]` table (`target`, `subtarget`, `profile`, `images`,
-   single-line values; `profile` is the OpenWrt device name, e.g. `glinet_gl-mt6000`).
-2. `build/openwrt/<id>.diffconfig`: copy the existing one, change the three
-   `CONFIG_TARGET_<target>_<subtarget>_DEVICE_<profile>=y` lines and the kmods/firmware the
-   device needs (see its `DEVICE_PACKAGES` in `target/linux/<target>/image/<subtarget>.mk`).
-3. Reuse `build/openwrt/kernel-config.fragment` unchanged. Add a per-board fragment only if a
-   driver option differs, and extend `build-image.sh` to install it.
-4. `build/run-in-docker.sh --board <id>`. The script refuses to start if the diffconfig does
-   not select the device named in the board file.
+See [PORTING.md](PORTING.md). In short: `boards/<profile>.toml`,
+`build/openwrt/<profile>.diffconfig`, a `kernel-<target>.fragment` for a new OpenWrt target,
+and one line in `crates/owr-board/src/lib.rs`; `scripts/openwrt-device-facts.sh <profile>`
+collects the facts, and `build/run-in-docker.sh --board <profile>` builds the image. The
+build refuses a board whose diffconfig does not select its device or whose architecture is
+not supported.

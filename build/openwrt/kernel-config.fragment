@@ -1,14 +1,18 @@
-# ferritewrt extra kernel options (Linux 6.18, shared by every board).
+# ferritewrt extra kernel options (Linux 6.18), shared by every board. Every board
+# is aarch64 today (build-image.sh refuses others), so arm64-only symbols are fine
+# here. Options that belong to one OpenWrt target (a SoC vendor's watchdog driver,
+# for example) go in build/openwrt/kernel-<target>.fragment instead.
 #
 # How it is consumed (verified in the OpenWrt tree, include/target.mk:178):
 #   LINUX_KCONFIG_LIST = generic/config-6.18 + <target>/config-6.18
 #                      + <subtarget>/config-6.18 + $(TOPDIR)/env/kernel-config
-# build-image.sh copies this file to <openwrt>/env/kernel-config. It is the LAST
-# file merged, so it overrides the generic and filogic defaults. kconfig.pl then
+# build-image.sh writes this file, then kernel-<target>.fragment if it exists, to
+# <openwrt>/env/kernel-config. It is the LAST file merged, so it overrides the
+# generic and target defaults. kconfig.pl then
 # appends the CONFIG_KERNEL_* values of the OpenWrt .config AFTER this fragment
 # (include/kernel-defaults.mk:115-123), so those win on a conflict. To keep one
 # source of truth, anything OpenWrt exposes as a CONFIG_KERNEL_* knob lives in
-# build/openwrt/<board>.diffconfig and is NOT repeated here: SECCOMP, SECURITY,
+# build/openwrt/common.diffconfig and is NOT repeated here: SECCOMP, SECURITY,
 # SECURITY_NETWORK, DEVMEM, KEXEC, KALLSYMS, CGROUPS, NAMESPACES, USER_NS.
 #
 # Two OpenWrt behaviours to know about:
@@ -109,7 +113,6 @@ CONFIG_KEYBOARD_GPIO=y
 # (generic and filogic config); pinned because owr-init depends on both.
 CONFIG_F2FS_FS=y
 CONFIG_OVERLAY_FS=y
-# Hardware watchdog: owr-init pets /dev/watchdog. Upstream builds in the MediaTek
-# driver (CONFIG_MEDIATEK_WATCHDOG=y); pinned.
+# Hardware watchdog: owr-init pets /dev/watchdog. The SoC's driver is pinned in
+# kernel-<target>.fragment.
 CONFIG_WATCHDOG=y
-CONFIG_MEDIATEK_WATCHDOG=y

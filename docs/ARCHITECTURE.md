@@ -1,16 +1,18 @@
 # FerriteWRT architecture
 
-FerriteWRT is a Rust router firmware for the GL.iNet Flint 2 (GL-MT6000, MediaTek
-MT7986A / Filogic 830). It reuses the OpenWrt tree only for what cannot sensibly be
-rewritten (the Linux kernel, its drivers, the boot chain and image packaging) and
-replaces OpenWrt's entire C userspace control plane with Rust.
+FerriteWRT is router firmware for devices that OpenWrt supports. It reuses the OpenWrt
+tree only for what cannot sensibly be rewritten (the Linux kernel, its drivers, the boot
+chain and image packaging) and replaces OpenWrt's entire C userspace control plane with
+Rust. Hardware differences live in data (`boards/<id>.toml` plus a short build config),
+not in code; the reference board is the GL.iNet Flint 2 (GL-MT6000, MediaTek MT7986A).
+Adding a router is described in [PORTING.md](PORTING.md).
 
 ## Scope boundary (what is Rust, what is kept)
 
 | Layer | OpenWrt component | FerriteWRT | Reason |
 |---|---|---|---|
-| Kernel + drivers (mt76, mtk_eth_soc, MT7531 DSA, EIP97) | Linux 6.18 (C) | kept, built from pinned OpenWrt tree with hardened diffconfig | not portable |
-| Boot chain | BL2 / BL31 / U-Boot FIP | kept, unmodified | not portable |
+| Kernel + drivers (per board: Wi-Fi, Ethernet, DSA switch, crypto engine) | Linux 6.18 (C) | kept, built from pinned OpenWrt tree with hardened diffconfig | not portable |
+| Boot chain | vendor bootloader (BL2 / BL31 / U-Boot on the reference board) | kept, unmodified | not portable |
 | PID 1 / service supervision / hotplug | procd, ujail | **owr-init** | |
 | IPC bus | ubus, ubusd, libubox, rpcd | removed: single process, typed in-process API | less attack surface |
 | Configuration | uci (/etc/config/*) | **owr-config** (TOML, typed, versioned, atomic) | |
@@ -21,8 +23,8 @@ replaces OpenWrt's entire C userspace control plane with Rust.
 | IPv6 RA/DHCPv6 | odhcpd | kept (ipv6only), config rendered by Rust; phase 2 | |
 | Web UI + API | uhttpd + LuCI (Lua/JS) + rpcd ACLs | **owr-api** (axum, rustls, argon2id, RBAC, CSRF) + embedded static UI | |
 | Logging | logd/ubox | owr-init journal (bounded ring buffer + persistent) | |
-| Storage/mounts | fstools (block, mount_root) | owr-init mounts (eMMC rootfs + f2fs overlay) | |
-| Upgrade | sysupgrade + fwtool | **owr-upgrade** (verify metadata + signature, write eMMC) | phase 2 |
+| Storage/mounts | fstools (block, mount_root) | owr-init mounts (squashfs rootfs + f2fs/ext4 overlay on a GPT partition) | UBI is planned |
+| Upgrade | sysupgrade + fwtool | **owr-upgrade** (verify metadata + signature, write the image) | phase 2 |
 | Shell | busybox ash | busybox kept for rescue console only; no shell in the control plane | phase 2 removal |
 | SSH | dropbear | optional, off by default; phase 2: russh | |
 | Package manager | opkg/apk | none: immutable, signed image | security |
@@ -42,10 +44,13 @@ crates/
   owr-apply    maps owr-config -> fw/wifi/net plans and drives appliers             (pure + linux)
   owr-cli      `owr` binary: validate, render, diff, apply, board                   (bin)
 build/
-  openwrt/<board>.diffconfig   minimal hardened OpenWrt config for kernel + image
-  rootfs-overlay/              files injected into the image (FILES=)
+  openwrt/common.diffconfig    OpenWrt config shared by every board (hardening, removed services)
+  openwrt/<board>.diffconfig   the board's device selection, drivers and firmware
+  openwrt/kernel-*.fragment    kernel hardening (shared) and per-OpenWrt-target options
+  rootfs-overlay/              files synced into <openwrt>/files, i.e. into the image
   Dockerfile, build-image.sh   reproducible Linux build (Windows host uses Docker)
-boards/<vendor>_<model>.toml   one file per supported router
+boards/<profile>.toml          one file per supported router, named by OpenWrt profile
+scripts/openwrt-device-facts.sh  everything OpenWrt knows about one device, for porting
 ```
 
 Dependency direction is strictly downward: `owr-cli -> owr-apply/owr-api -> {fw,wifi,net,config} -> board -> common`.
@@ -81,8 +86,11 @@ and independently testable.
 
 `boards/<id>.toml` is the single source of truth about the hardware (see
 `boards/glinet_gl-mt6000.toml`). The runtime reads `/etc/ferritewrt/board.toml`
-(installed from the same file). Adding a router = new TOML + new diffconfig; nothing
-else should need to change for a board that uses an already supported SoC family.
+(installed from the same file). Adding a router = new TOML + new diffconfig + one
+registration line, plus a `kernel-<target>.fragment` for the first board of a new OpenWrt
+target; no Rust logic changes for an aarch64 board with eMMC/SD storage. Repository
+tests keep the board files, their registration and their build configs consistent.
+Procedure and field sources: [PORTING.md](PORTING.md).
 
 ## Config model (owr-config)
 
@@ -106,12 +114,14 @@ roles. Shutdown: SIGTERM services, sync, unmount, reboot/poweroff.
 
 ## Build/image
 
-The OpenWrt tree at the pinned commit builds kernel + modules + kept C daemons with
-`build/openwrt/<board>.diffconfig` (CONFIG_TARGET_DEVICE_PACKAGES_... trimmed to the board,
-hardening options on: STACKPROTECTOR_STRONG, ARM64_PTR_AUTH, ARM64_BTI, INIT_ON_ALLOC/FREE,
-SECCOMP, SECURITY+LANDLOCK+YAMA, DEBUG_LIST, no DEVMEM/KCORE). The Rust binaries are
-cross-built for `aarch64-unknown-linux-musl` (static PIE) and injected via `FILES=`.
-Output: `factory.bin` and `sysupgrade.bin` compatible with the stock GL.iNet U-Boot.
+The OpenWrt tree at the pinned commit builds kernel + modules + kept C daemons from
+`build/openwrt/common.diffconfig` followed by `build/openwrt/<board>.diffconfig`, with the
+kernel fragments merged last (hardening on: STACKPROTECTOR_STRONG, ARM64_PTR_AUTH,
+ARM64_BTI, INIT_ON_ALLOC, SECCOMP, SECURITY+LANDLOCK+YAMA, DEBUG_LIST, no DEVMEM/KCORE).
+Every line of both is verified against the expanded configs. The Rust binaries are
+cross-built for `aarch64-unknown-linux-musl` (static) and staged into `<openwrt>/files`.
+Output per board: the `.bin` images OpenWrt builds for it (factory, sysupgrade,
+initramfs). Details: [BUILD.md](BUILD.md).
 
 Convention: any test that uses `insta` must have `snapshot` in its name; `scripts/linux-tests.sh`
 skips those on Linux because snapshot paths are compiled in from the host.

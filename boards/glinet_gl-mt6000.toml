@@ -1,8 +1,8 @@
 # Board descriptor for the GL.iNet Flint 2 (GL-MT6000).
 # Source of truth: OpenWrt target/linux/mediatek/dts/mt7986a-glinet-gl-mt6000.dts,
 # target/linux/mediatek/image/filogic.mk (glinet_gl-mt6000), filogic base-files.
-# Every value here is machine-validated by the owr-board crate. Adding a new router
-# means adding a file like this one plus a build/openwrt/<id>.diffconfig.
+# Every value here is machine-validated by the owr-board crate. Adding a router means a
+# file like this one plus build/openwrt/<id>.diffconfig: see docs/PORTING.md.
 schema = 1
 
 [board]
@@ -183,7 +183,7 @@ subtarget = "filogic"
 profile = "glinet_gl-mt6000"
 kernel_modules = [
   "kmod-mt7915e", "kmod-mt7986-firmware", "kmod-crypto-hw-safexcel",
-  "kmod-usb3", "kmod-leds-gpio", "kmod-input-gpio-keys", "kmod-input-evdev", "kmod-fs-f2fs",
+  "kmod-usb3", "kmod-leds-gpio", "kmod-input-gpio-keys", "kmod-input-evdev",
   "kmod-nft-core", "kmod-nft-nat", "kmod-nft-offload", "kmod-nft-fib",
 ]
 firmware_packages = ["mt7986-wo-firmware"]

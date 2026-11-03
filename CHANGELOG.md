@@ -6,6 +6,29 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Router porting: `docs/PORTING.md` (procedure, support limits, where every board field
+  comes from in OpenWrt), `scripts/openwrt-device-facts.sh` (support verdict and every
+  hardware fact for one OpenWrt device, plus `--search`), and the `/ferrite-forge` Claude
+  Code skill that drives the same workflow.
+- Repository tests (`crates/owr-board/tests/repo_boards.rs`): every board file is
+  registered, its diffconfig selects the device, module lists match the diffconfig, and
+  nothing repeats the shared config.
+- CI checks the OpenWrt config of every board, not only the reference board.
+
+### Changed
+- OpenWrt config split into `build/openwrt/common.diffconfig` (shared policy) and a short
+  per-board diffconfig; kernel options of one OpenWrt target moved to
+  `kernel-<target>.fragment` (`kernel-mediatek.fragment` holds the MediaTek watchdog).
+- `build-image.sh` derives the Rust target from the board's `[soc] arch` and refuses
+  unsupported architectures with a pointer to the porting guide.
+- `ARCHITECTURE.md` moved to `docs/ARCHITECTURE.md`; README and docs describe FerriteWRT
+  as firmware for OpenWrt-supported routers, with the Flint 2 as reference board.
+
+### Fixed
+- `boards/glinet_gl-mt6000.toml` listed `kmod-fs-f2fs`, which the build never selected
+  (f2fs is built into the kernel).
+
 ## [0.1.2] - 2026-11-03
 
 ### Fixed
