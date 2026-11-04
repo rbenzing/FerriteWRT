@@ -25,7 +25,7 @@ dirs), `ferritewrt-cargo` and `ferritewrt-target`. The OpenWrt revision is pinne
 `--openwrt-rev`/`--openwrt-repo`. `docker volume rm` the three volumes to start clean.
 
 `build/build-image.sh` then: checks out OpenWrt at the pin; cross-builds the Rust workspace
-(`cargo xbuild`, aarch64-unknown-linux-musl, static PIE); stages `build/rootfs-overlay/` +
+(`cargo xbuild`, aarch64-unknown-linux-musl, static, not PIE: see `STATUS.md`); stages `build/rootfs-overlay/` +
 binaries + `sbin/init -> owr-init` + `boards/<board>.toml`; expands
 `build/openwrt/common.diffconfig` followed by `build/openwrt/<board>.diffconfig` and **fails
 if any line did not stick**; installs the kernel fragments (`kernel-config.fragment`, then
@@ -87,9 +87,11 @@ does not describe a web recovery; that belongs to the stock U-Boot.
    `tftpboot 0x46000000 <initramfs-kernel.bin>` then `bootm 0x46000000`.
 4. A power cycle returns to whatever is on the eMMC.
 
-Before step 3 confirm that `owr-init` does not mount, format or write `rootfs_data` when the
-root is the initramfs (OpenWrt's initramfs `/init` switches to a tmpfs and runs `/sbin/init`);
-this is an `owr-init` requirement, not something the build enforces.
+`owr-init` does not mount, format or write `rootfs_data` when `/` is RAM-backed (OpenWrt's
+initramfs `/init` switches to a tmpfs and runs `/sbin/init`); it logs `root filesystem: tmpfs`
+and `data partition untouched`. Check both lines on the console, and that
+`grep -E 'f2fs|overlay|mmcblk' /proc/mounts` prints nothing, before testing anything else.
+v0.2.0 did not have this check right; boot v0.2.1 or later (see `STATUS.md`).
 
 ## C components in the image
 

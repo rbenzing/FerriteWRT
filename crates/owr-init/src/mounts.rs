@@ -541,6 +541,16 @@ pub fn parse_mountinfo(text: &str) -> Vec<MountEntry> {
         .collect()
 }
 
+/// Filesystem type mounted at `/`: the last `/` entry, since a later mount over `/` hides the
+/// earlier ones. `None` when there is no `/` entry.
+pub fn root_fstype(entries: &[MountEntry]) -> Option<&str> {
+    entries
+        .iter()
+        .rev()
+        .find(|e| e.target == "/")
+        .map(|e| e.fstype.as_str())
+}
+
 /// Filesystems holding writable persistent data that must be quiesced before reboot.
 const PERSISTENT_FS: &[&str] = &[
     "f2fs", "ext2", "ext3", "ext4", "vfat", "overlay", "ubifs", "jffs2",
@@ -1060,5 +1070,20 @@ garbage line
             .map(|e| e.target)
             .collect();
         assert_eq!(order, ["/mnt/with space", "/overlay", "/"]);
+    }
+
+    #[test]
+    fn root_fstype_is_the_topmost_root_mount() {
+        assert_eq!(root_fstype(&parse_mountinfo(MOUNTINFO)), Some("overlay"));
+        // Initramfs boot after OpenWrt's /init switch_root: the tmpfs hides the initial rootfs.
+        let initramfs = "\
+1 1 0:2 / / rw - rootfs rootfs rw
+20 1 0:19 / / rw,relatime - tmpfs tmpfs rw
+21 20 0:20 / /proc rw - proc proc rw
+";
+        assert_eq!(root_fstype(&parse_mountinfo(initramfs)), Some("tmpfs"));
+        let flash = "15 1 179:5 / / ro,relatime - squashfs /dev/root ro\n";
+        assert_eq!(root_fstype(&parse_mountinfo(flash)), Some("squashfs"));
+        assert_eq!(root_fstype(&parse_mountinfo("garbage\n")), None);
     }
 }

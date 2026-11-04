@@ -30,7 +30,9 @@ use crate::boot::{
 };
 use crate::journal::{Journal, shared};
 use crate::led::{LEDS_ROOT, LedState, led_writes};
-use crate::mounts::{BootMode, DATA_MOUNT, base_plan, root_plan, storage_plan};
+use crate::mounts::{
+    BootMode, DATA_MOUNT, base_plan, parse_mountinfo, root_fstype, root_plan, storage_plan,
+};
 use crate::services::{
     APPLY_BIN, CHILD_PATH, SETSID_BIN, ServiceContext, build_services, console_argv,
     ssh_enabled_marker,
@@ -180,7 +182,7 @@ fn mount_data(board: Option<&Board>, initramfs: bool) -> DataState {
         error: !initramfs && board.is_none(),
     };
     if initramfs {
-        tracing::info!("initramfs boot (no root= on the command line): data partition untouched");
+        tracing::info!("initramfs boot (root filesystem in RAM): data partition untouched");
     } else if let Some(b) = board {
         match storage_plan(&b.storage) {
             Ok(steps) if steps.is_empty() => tracing::info!("board has no overlay partition"),
@@ -270,7 +272,14 @@ pub(super) fn run() -> ExitCode {
     tracing::info!("owr-init {} starting as PID 1", env!("CARGO_PKG_VERSION"));
 
     let cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
-    let initramfs = is_initramfs_boot(&cmdline);
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo").unwrap_or_else(|e| {
+        tracing::error!("cannot read /proc/self/mountinfo: {e}");
+        String::new()
+    });
+    let mounts = parse_mountinfo(&mountinfo);
+    let root_fs = root_fstype(&mounts);
+    tracing::info!("root filesystem: {}", root_fs.unwrap_or("unknown"));
+    let initramfs = is_initramfs_boot(root_fs);
     let watchdog = match Watchdog::start(Path::new("/dev/watchdog")) {
         Ok(w) => Some(w),
         Err(e) => {

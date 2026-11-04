@@ -6,6 +6,21 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-04
+
+### Security
+- `owr-init` no longer treats the initramfs test boot as a flash boot on the GL-MT6000.
+  It decided from the absence of `root=` on the kernel command line, but the board's DTS
+  appends `root=PARTLABEL=rootfs` to every boot, so the v0.2.0 initramfs image would have
+  mounted and overlaid the router's existing `rootfs_data` partition. It now decides from
+  the filesystem mounted at `/` (RAM-backed: tmpfs, ramfs, rootfs) and leaves storage
+  untouched when that cannot be read. Do not boot the v0.2.0 initramfs image.
+
+### Changed
+- `docs/STATUS.md` and `docs/ROADMAP.md` describe the current state (image build and
+  releases working, first hardware session checklist); docs no longer call the router
+  binaries PIE: rustc links them as fixed-address static executables for this target.
+
 ## [0.2.0] - 2026-11-03
 
 ### Added

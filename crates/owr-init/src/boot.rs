@@ -79,13 +79,23 @@ pub struct BootDecision {
     pub consume_marker: bool,
 }
 
-/// Booted from an initramfs (test image): the kernel command line has no `root=`.
+/// Filesystem types of a RAM-backed `/`: the kernel's initial `rootfs` (ramfs or tmpfs), or
+/// the tmpfs that `OpenWrt`'s initramfs `/init` copies itself into before `switch_root`
+/// (`target/linux/generic/other-files/init`).
+const RAM_ROOT_FS: &[&str] = &["rootfs", "ramfs", "tmpfs"];
+
+/// Booted from an initramfs (test image): `/` is RAM-backed. `root_fstype` is the filesystem
+/// type mounted at `/` ([`crate::mounts::root_fstype`]).
 ///
 /// In that case init must not touch the eMMC data partition: no probe, no mkfs, no overlay,
 /// no `pivot_root` (the initramfs root is already RAM-backed and writable). Boot counter and
 /// journal persistence are skipped as well.
-pub fn is_initramfs_boot(cmdline: &str) -> bool {
-    !cmdline.split_whitespace().any(|w| w.starts_with("root="))
+///
+/// The kernel command line cannot tell: the GL-MT6000 DTS appends `root=PARTLABEL=rootfs` to
+/// every boot (`bootargs-append`), and the initramfs image carries the same DTB. An unknown
+/// root type counts as initramfs, so a doubt never leads to writing flash.
+pub fn is_initramfs_boot(root_fstype: Option<&str>) -> bool {
+    root_fstype.is_none_or(|t| RAM_ROOT_FS.contains(&t))
 }
 
 pub fn cmdline_requests_failsafe(cmdline: &str) -> bool {
@@ -483,17 +493,15 @@ mod tests {
     }
 
     #[test]
-    fn initramfs_boot_is_detected_by_missing_root_arg() {
-        assert!(is_initramfs_boot("console=ttyS0,115200n1"));
-        assert!(is_initramfs_boot(""));
-        assert!(!is_initramfs_boot(
-            "console=ttyS0 root=PARTLABEL=rootfs rootwait"
-        ));
-        assert!(!is_initramfs_boot("root=/dev/mmcblk0p5"));
-        assert!(
-            is_initramfs_boot("rootwait rootfstype=squashfs"),
-            "only a root= word counts"
-        );
+    fn initramfs_boot_is_detected_by_a_ram_root() {
+        // OpenWrt's initramfs /init switch_roots into a tmpfs; without it the root is rootfs.
+        assert!(is_initramfs_boot(Some("tmpfs")));
+        assert!(is_initramfs_boot(Some("rootfs")));
+        assert!(is_initramfs_boot(Some("ramfs")));
+        // A flash boot: the kernel mounted root= (squashfs on the GL-MT6000).
+        assert!(!is_initramfs_boot(Some("squashfs")));
+        assert!(!is_initramfs_boot(Some("ext4")));
+        assert!(is_initramfs_boot(None), "unknown root: never touch storage");
     }
 
     #[test]

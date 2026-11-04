@@ -24,8 +24,10 @@ on EIO): use `linux::console_log`; clippy denies `print_stderr`/`print_stdout`.
    `/etc/ferritewrt/ssh.enabled` exists). `owr-api` depends on `kmodloader` only, so the management
    UI is reachable even when apply fails. Services whose rendered config is missing are skipped.
 
-Booted from an initramfs (kernel cmdline has no `root=`): the data partition is never touched
-(no probe, mkfs, overlay or pivot); init runs on the RAM root, persistence is off.
+Booted from an initramfs (`/` in `/proc/self/mountinfo` is tmpfs, ramfs or rootfs, or cannot be
+determined): the data partition is never touched (no probe, mkfs, overlay or pivot); init runs on
+the RAM root, persistence is off. The kernel command line is not used for this: the GL-MT6000 DTS
+appends `root=PARTLABEL=rootfs` to the initramfs boot too.
 
 ## Failsafe
 Entered (first match) when: the reset button is pressed within 2 s of the `gpio-keys` device being
