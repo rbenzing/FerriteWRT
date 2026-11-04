@@ -8,14 +8,14 @@
 <br>
 
 [![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://openwrt.org/)
-[![OpenWrt](https://img.shields.io/badge/OpenWrt-routers-00B5E2?style=for-the-badge&logo=openwrt&logoColor=white)](#-supported-hardware)
+[![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://kernel.org/)
+[![Hardware](https://img.shields.io/badge/Hardware-aarch64%20routers-2F6FEF?style=for-the-badge)](#-supported-hardware)
 [![CI](https://img.shields.io/github/actions/workflow/status/rbenzing/FerriteWRT/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/rbenzing/FerriteWRT/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/rbenzing/FerriteWRT?style=for-the-badge)](https://github.com/rbenzing/FerriteWRT/releases/latest)
 [![License: GPL-2.0](https://img.shields.io/badge/License-GPL--2.0-blue.svg?style=for-the-badge)](./LICENSE)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/russellbenzing)
 
-**Router firmware with a memory-safe userspace, for the routers OpenWrt supports**
+**Router firmware with a memory-safe userspace, written in Rust**
 
 🔒 **Secure by default** • 🦀 **Rust, no unsafe** • 📦 **Signed, hash-verified releases** • 🧭 **One config file**
 
@@ -25,12 +25,10 @@
 
 ---
 
-**FerriteWRT** keeps the Linux kernel, drivers and boot chain from [OpenWrt](https://openwrt.org/)
-and replaces the entire userspace control plane with Rust: init and service supervision,
-configuration, networking, firewall rendering, Wi-Fi configuration, the management API
-and the web UI. Because the kernel side is OpenWrt's, FerriteWRT can run on the routers
-OpenWrt supports: each router is a small hardware description plus a build config, and
-everything above the kernel is the same Rust code on every device.
+**FerriteWRT** is router firmware whose entire control plane is Rust: init and service
+supervision, configuration, networking, firewall, Wi-Fi configuration, the management API
+and the web UI, on a hardened Linux kernel. Each router is a small hardware description plus
+a build config; everything above the kernel is the same Rust code on every device.
 
 > Ferrite: the iron ceramic that keeps noise off a cable. The name is the job.
 
@@ -43,7 +41,7 @@ integrity and performance**, then ease of use.
 
 - **🔒 Default-deny firewall** — nftables ruleset rendered from a typed model and loaded before forwarding is enabled
 - **🦀 Memory-safe control plane** — every daemon in Rust with `#![forbid(unsafe_code)]`; `cargo deny` enforces a pure-Rust dependency graph (rustls, no OpenSSL, no C crypto)
-- **🧭 One configuration file** — typed, versioned TOML replaces `uci`; unknown keys are rejected, writes are atomic
+- **🧭 One configuration file** — typed, versioned TOML; unknown keys are rejected, writes are atomic
 - **♻️ Idempotent apply** — observe, plan, apply, verify; re-running an apply never flaps a working link
 - **🌐 Management over HTTPS only** — argon2id passwords, CSRF, admin and viewer roles, audit log, strict CSP
 - **📦 Signed releases** — every firmware release ships `SHA256SUMS`, an ed25519 signature and GitHub build-provenance attestations
@@ -54,8 +52,10 @@ integrity and performance**, then ease of use.
 
 ## 🧩 Supported hardware
 
-FerriteWRT is built for any router OpenWrt supports. Two limits apply today: the router
-needs a **64-bit ARM (aarch64) SoC** and **eMMC or SD storage with a GPT partition table**,
+FerriteWRT's hardware support comes from [OpenWrt](https://openwrt.org/): the kernel,
+drivers, bootloader handling and image packaging for each router are built from OpenWrt's
+device support, so a router OpenWrt supports is a candidate. Two limits apply today: the
+router needs a **64-bit ARM (aarch64) SoC** and **eMMC or SD storage with a GPT partition table**,
 which many current Wi-Fi 6 and Wi-Fi 7 routers have (for example eMMC models on MediaTek
 Filogic). 32-bit ARM and NAND-only routers are planned; MIPS routers cannot run the Rust
 userspace. The facts script below gives a verdict for any OpenWrt device.
@@ -92,16 +92,16 @@ far you got.
 
 ## 🏗️ Architecture
 
-| Layer | OpenWrt | FerriteWRT |
-|---|---|---|
-| Kernel, drivers, U-Boot, image packaging | C, from the pinned OpenWrt tree | unchanged |
-| Init, service supervision, logging, mounts | procd, ubox, fstools | `owr-init` |
-| Configuration | uci | `owr-config` |
-| Networking, DHCP client | netifd, udhcpc | `owr-net` |
-| Firewall | firewall4 | `owr-fw` |
-| Wi-Fi configuration | wifi-scripts | `owr-wifi` (hostapd stays) |
-| Management API, web UI | uhttpd, rpcd, ubus, LuCI | `owr-api` |
-| Command line | uci, ubus | `owr` |
+| Layer | FerriteWRT |
+|---|---|
+| Init, service supervision, logging, mounts, watchdog | `owr-init` |
+| Configuration | `owr-config` |
+| Networking, DHCP client | `owr-net` |
+| Firewall | `owr-fw` (nftables) |
+| Wi-Fi configuration | `owr-wifi` (drives hostapd) |
+| Management API, web UI | `owr-api` |
+| Command line | `owr` |
+| Kernel, drivers, bootloader, image packaging | Linux, built per router (see [Supported hardware](#-supported-hardware)) |
 
 ```
 boards/            one TOML hardware description per supported router
@@ -116,7 +116,7 @@ crates/owr-init    PID 1 supervisor, journal, mounts, watchdog
 crates/owr-apply   apply orchestration
 crates/owr-api     HTTPS API + embedded web UI
 crates/owr-cli     the owr command-line tool and release tooling
-build/             OpenWrt configs (shared + per router), kernel fragments, Dockerfile
+build/             image build: shared + per-router configs, kernel fragments, Dockerfile
 scripts/           device facts for porting, version checks, test helpers
 docs/              architecture, porting, build, versioning, status, roadmap
 ```
@@ -161,8 +161,8 @@ cargo build --release --target aarch64-unknown-linux-musl --workspace   # router
 cargo run -p owr-api -- --dev        # https://127.0.0.1:8080
 ```
 
-Linux-only test paths run through `scripts/linux-tests.sh`. Firmware images are assembled
-in Docker against the pinned OpenWrt tree; see [docs/BUILD.md](docs/BUILD.md).
+Linux-only test paths run through `scripts/linux-tests.sh`. Firmware images are built in
+Docker; see [docs/BUILD.md](docs/BUILD.md).
 
 ---
 
@@ -178,8 +178,9 @@ what comes after in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## 📄 License
 
-GPL-2.0-only, matching the OpenWrt tree the kernel and image recipes come from. See
-[LICENSE](LICENSE).
+GPL-2.0-only. See [LICENSE](LICENSE). Firmware images also contain the Linux kernel,
+drivers and the few C tools listed in [docs/BUILD.md](docs/BUILD.md), under their own
+licenses.
 
 ---
 
