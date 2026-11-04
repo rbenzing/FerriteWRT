@@ -33,6 +33,7 @@ use crate::led::{LEDS_ROOT, LedState, led_writes};
 use crate::mounts::{
     BootMode, DATA_MOUNT, base_plan, parse_mountinfo, root_fstype, root_plan, storage_plan,
 };
+use crate::sandbox;
 use crate::services::{
     APPLY_BIN, CHILD_PATH, SETSID_BIN, ServiceContext, build_services, console_argv,
     ssh_enabled_marker,
@@ -312,6 +313,7 @@ pub(super) fn run() -> ExitCode {
             .as_ref()
             .map(|b| b.wifi.radios.iter().map(|r| r.phy_index).collect())
             .unwrap_or_default(),
+        sandbox: !Path::new(&sandbox::disable_marker()).exists(),
     };
     let persistent = data_ok && decision.mode == BootMode::Normal;
     let cfg = RuntimeConfig {

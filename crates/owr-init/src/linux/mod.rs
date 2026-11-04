@@ -15,6 +15,7 @@ mod init;
 mod kmsg;
 mod mount_exec;
 mod runtime;
+mod sandbox;
 mod shutdown;
 mod spawn;
 mod uevent_sock;
@@ -133,6 +134,7 @@ pub fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Cli::Test { dir, services }) => test_mode(dir, services),
+        Ok(Cli::Sandbox { profile, argv }) => sandbox::run(&profile, &argv),
         Ok(Cli::Pid1) => {
             console_log(format_args!(
                 "not PID 1; use --test-mode <dir> to run the supervisor loop"

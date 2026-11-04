@@ -29,7 +29,10 @@ Current state and the next hardware step are in [STATUS.md](STATUS.md).
 - Drop busybox from the production image (rescue shell only in initramfs image).
 - Optional SSH via `russh`, key-only.
 - Patch OpenWrt `base-files` so procd/ubus/uci are not installed at all.
-- Landlock + seccomp sandboxes for the kept daemons, applied by `owr-init`.
+- Done (untested on hardware): Landlock + seccomp + capability bounding for dnsmasq,
+  odhcpd and hostapd, applied by `owr-init --sandbox`. Next: confine `owr-api` and
+  `owr-apply` (need network administration and config writes; best done with a separate
+  uid and narrower socket permissions).
 
 ## Phase 3: nf_tables over netlink, more boards
 - Pure-Rust nf_tables netlink applier (remove the `nft` binary).

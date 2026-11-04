@@ -77,9 +77,29 @@ Client: `owr_init::client` (pure std, sync; `InitClient` is unix-only, the frami
 is what `owr-api` and `owr status` use: one connection per call, 2 s timeouts, replies capped at 1 MiB, service names
 validated with the same rule as init (`ClientError::{BadName, UnknownService, Refused, ..}`).
 
+## Sandboxed daemons
+dnsmasq, odhcpd and `hostapd-phy<N>` carry `ServiceSpec::sandbox` (profiles in
+`src/sandbox.rs`). The supervisor creates the files a profile writes (empty, 0644) and the
+directories it owns (0700), then starts `owr-init --sandbox <profile> -- <exec>`. The launcher
+(`src/linux/sandbox.rs`) drops every capability outside the profile from the bounding set,
+clears the ambient set, sets `no_new_privs`, applies a Landlock ruleset (ABI v5: read and
+execute `/bin /sbin /usr /lib`, read `/proc /sys`, every `/etc` entry except `ferritewrt`, a few
+`/dev` nodes, plus the profile's own files) and a seccomp filter returning `EPERM` for
+module, mount, namespace, kexec, reboot, ptrace, bpf, `io_uring`, keyring and clock syscalls,
+then execs the daemon. It fails closed (exit 126, reason in the service's journal); a kernel
+without Landlock is reported and tolerated. Profile paths that do not exist are reported and
+get no rule. `/etc/ferritewrt/sandbox.off` turns confinement off at the next service start.
+The profiles come from the daemons' documentation and our rendered configs, not a trace on
+the router: first hardware boots should watch these services' journals.
+
+Linux test `linux::sandbox::tests::confined_process_is_restricted` (root only) re-runs the
+test binary as a confined child and checks its bounding set, `no_new_privs`, seccomp mode, a
+refused `mount` and a refused write outside the profile.
+
 ## Adding a service
 Add a `ServiceSpec` in `src/services.rs::build_services` (absolute `exec`, `restart`,
-`depends_on`, optional `condition_path_exists`, `health`) and a test next to the others.
+`depends_on`, optional `condition_path_exists`, `health`) and a test next to the others. A
+service that parses untrusted input gets a profile in `src/sandbox.rs`.
 
 ## Test mode (Linux dev box, no root needed)
 ```

@@ -62,6 +62,10 @@ Procedure details (U-Boot variables, addresses) are in [BUILD.md](BUILD.md).
    `nft -c -f /run/ferritewrt/firewall.nft`, `hostapd -t` style checks of
    `/run/ferritewrt/*.conf`, a LAN client getting a DHCP lease, NAT to the WAN, both
    radios beaconing, the UI at https://192.168.8.1.
+   From v0.3.0 dnsmasq, odhcpd and hostapd run confined (`owr-init --sandbox`). If one of
+   them keeps restarting, its journal (`owr` UI logs, or the console) names the refused
+   step or file; `touch /etc/ferritewrt/sandbox.off` and restart it to confirm the sandbox
+   is the cause, and report the message so the profile can be fixed.
 6. Only after all of step 5 works, flash `factory.bin` (BUILD.md, "Flashing").
 
 Record what failed (console log, `owr status` output) in an issue; each failure is a

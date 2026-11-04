@@ -19,6 +19,9 @@ tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 owr-upgrade.workspace = true
+landlock.workspace = true
+libc.workspace = true
+seccompiler.workspace = true
 rustix.workspace = true
 tokio.workspace = true
 

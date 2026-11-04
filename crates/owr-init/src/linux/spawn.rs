@@ -4,8 +4,10 @@
 //! `Child`: init reaps *all* children with `waitpid(-1)` (it must, as PID 1 adopts orphans),
 //! and tokio's own child reaping would race with that.
 
+use std::fs::{DirBuilder, OpenOptions};
 use std::io;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -16,12 +18,31 @@ use tokio::process::{ChildStderr, ChildStdout};
 
 use super::clock::boot_ms;
 use crate::journal::{LineSplitter, MAX_MSG_BYTES, SharedJournal, Source, lock};
+use crate::sandbox::{Profile, launcher_argv, profile_for};
 use crate::service::ServiceSpec;
 use crate::services::{CHILD_PATH, SETSID_BIN, console_argv};
 
 /// Syslog levels for the two output streams.
 const PRIO_STDOUT: u8 = 6;
 const PRIO_STDERR: u8 = 4;
+
+/// Create what a confined service writes but may not create itself: its files (empty, 0644)
+/// and its own directories (0700). Existing ones are left alone.
+fn prepare(profile: &Profile) -> io::Result<()> {
+    let (files, dirs) = profile.prepare();
+    for dir in dirs {
+        DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    }
+    for file in files {
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o644)
+            .open(file)?;
+    }
+    Ok(())
+}
 
 /// Start `spec`; returns the child's pid. Must be called inside the tokio runtime.
 pub(super) fn spawn_service(spec: &ServiceSpec, journal: &SharedJournal) -> io::Result<u32> {
@@ -32,6 +53,15 @@ pub(super) fn spawn_service(spec: &ServiceSpec, journal: &SharedJournal) -> io::
     let wrapped = spec.console && Path::new(SETSID_BIN).exists();
     let argv = if spec.console {
         console_argv(&spec.exec, wrapped)
+    } else if let Some(name) = &spec.sandbox {
+        let profile = profile_for(name).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown sandbox profile {name}"),
+            )
+        })?;
+        prepare(&profile)?;
+        launcher_argv(name, &spec.exec)
     } else {
         spec.exec.clone()
     };

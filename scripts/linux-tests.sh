@@ -18,6 +18,9 @@ TARGET=x86_64-unknown-linux-musl
 if [ "$#" -eq 0 ]; then sel=(--workspace); else sel=("$@"); fi
 rustup target list --installed | grep -q "$TARGET" || rustup target add "$TARGET"
 
+# Build first, with errors visible: a test binary that does not compile must fail the run,
+# not silently drop out of the list below.
+cargo test "${sel[@]}" --target "$TARGET" --no-run --quiet || { echo "test build failed" >&2; exit 1; }
 mapfile -t exes < <(cargo test "${sel[@]}" --target "$TARGET" --no-run --message-format=json 2>/dev/null \
   | grep -o '"executable":"[^"]*"' | sed 's/"executable":"//; s/"$//' | sed 's#\\\\#/#g')
 

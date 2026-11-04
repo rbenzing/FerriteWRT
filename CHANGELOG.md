@@ -25,6 +25,13 @@ All notable changes to FerriteWRT are recorded here. The format follows
   images up to 128 MiB), checked (`POST /api/v1/system/upgrade/check`: version, board,
   signature) and installed (`POST /api/v1/system/upgrade`) after an inline confirmation;
   "Reset all settings" is off by default, a downgrade must be ticked explicitly.
+- Confined network daemons: dnsmasq, odhcpd and hostapd start through
+  `owr-init --sandbox <profile>`, which reduces the capability bounding set to what each
+  needs, sets `no_new_privs`, limits the file system with Landlock (no `/etc/ferritewrt`, no
+  data partition, no block devices, writes only to its own state files) and denies module,
+  mount, namespace, kexec, reboot, ptrace, bpf, `io_uring`, keyring and clock syscalls with
+  seccomp, then execs the daemon. Fails closed; `/etc/ferritewrt/sandbox.off` turns it off.
+  New dependencies: `landlock`, `seccompiler`, `libc` (pure Rust).
 
 ### Changed
 - The release signature contract (`SHA256SUMS`, `SHA256SUMS.sig`) lives in `owr-upgrade`

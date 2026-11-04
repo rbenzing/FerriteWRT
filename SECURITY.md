@@ -17,7 +17,10 @@ Adversaries, strongest first:
 4. **Viewer-role account**: read-only. Must not be able to change anything or read
    secrets.
 5. **Malicious firmware image**: must not be accepted by the upgrader without a valid
-   signature (phase 2; the stock bootloader is out of scope).
+   signature (`owr-upgrade`; the stock bootloader is out of scope).
+6. **Compromised network daemon**: a memory-safety bug in dnsmasq, odhcpd or hostapd
+   (C, parsing LAN and Wi-Fi traffic). Must not reach the settings, the flash, kernel
+   modules or other processes.
 
 Out of scope: physical access (UART, eMMC), supply-chain compromise of the Linux
 kernel or the kept C daemons, and side channels on the SoC.
@@ -49,6 +52,16 @@ kernel or the kept C daemons, and side channels on the SoC.
   strong, ARM64 pointer authentication and userspace BTI, zeroed stack variables,
   init-on-alloc, seccomp, Landlock +
   Yama, hardened usercopy/freelists, KASLR, no `/dev/mem`, no `/proc/kcore`, no kexec.
+- **Confined network daemons** (`crates/owr-init/src/sandbox.rs`): dnsmasq, odhcpd and
+  hostapd start through `owr-init --sandbox`, which before `exec` reduces the capability
+  bounding set to what each needs (network administration, raw sockets, low ports;
+  dnsmasq also its user switch), sets `no_new_privs`, restricts the file system with
+  Landlock to the system directories, its rendered config and its own state files
+  (`/etc/ferritewrt`, the data partition and block devices are unreachable), and denies
+  module loading, mounts, kexec, reboot, ptrace, bpf, `io_uring`, keyrings and clock
+  changes with seccomp. Untested on hardware; `/etc/ferritewrt/sandbox.off` disables it.
+  `owr-api` and `owr-apply` (Rust, need broad network and file access) are not confined
+  yet.
 - **No shell in the control plane**: nothing in FerriteWRT spawns a shell or interprets
   strings as commands; daemons are exec'd directly with cleared environments.
 - **No package manager**: the image is immutable; updates are whole signed images.

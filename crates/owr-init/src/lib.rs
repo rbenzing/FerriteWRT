@@ -20,6 +20,7 @@ pub mod journal;
 pub mod led;
 pub mod manager;
 pub mod mounts;
+pub mod sandbox;
 pub mod service;
 pub mod services;
 pub mod uevent;

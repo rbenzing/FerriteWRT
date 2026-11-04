@@ -131,6 +131,10 @@ pub struct ServiceSpec {
     /// Any exit, spawn failure or timeout counts as completed so dependents still proceed.
     #[serde(default)]
     pub ignore_failure: bool,
+    /// Start confined by this [`crate::sandbox`] profile (through the `owr-init --sandbox`
+    /// launcher, which execs `exec`).
+    #[serde(default)]
+    pub sandbox: Option<String>,
 }
 
 impl ServiceSpec {
@@ -150,6 +154,7 @@ impl ServiceSpec {
             condition_path_exists: None,
             timeout_ms: None,
             ignore_failure: false,
+            sandbox: None,
         }
     }
 
@@ -243,7 +248,7 @@ pub enum Signal {
 /// Output of the state machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    Spawn(ServiceSpec),
+    Spawn(Box<ServiceSpec>),
     Kill { pid: u32, signal: Signal },
     ScheduleTick(Instant),
     Log(Level, String),
@@ -412,7 +417,7 @@ impl Supervisor {
         self.health_kill = false;
         self.timed_out = false;
         self.kill_sent = false;
-        out.push(Command::Spawn(self.spec.clone()));
+        out.push(Command::Spawn(Box::new(self.spec.clone())));
         self.log(out, Level::INFO, "starting");
     }
 

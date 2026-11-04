@@ -7,6 +7,7 @@
 use owr_common::paths::{CONFIG_DIR, RUN_DIR};
 use serde::Deserialize;
 
+use crate::sandbox::profile_for;
 use crate::service::{RestartPolicy, ServiceSpec};
 
 /// Environment given to every child: only `PATH`, everything else is cleared.
@@ -39,8 +40,10 @@ pub fn ssh_enabled_marker() -> String {
     format!("{CONFIG_DIR}/ssh.enabled")
 }
 
-/// Facts that decide which services run.
+/// Facts that decide which services run. Independent yes/no facts gathered from the file
+/// system, hence the bools.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ServiceContext {
     pub failsafe: bool,
     /// `/sbin/owr-apply` is installed.
@@ -48,6 +51,9 @@ pub struct ServiceContext {
     pub ssh_enabled: bool,
     /// `phy_index` of every board radio; one hostapd instance each.
     pub radio_phys: Vec<u8>,
+    /// Confine the network daemons ([`crate::sandbox`]); off when
+    /// `/etc/ferritewrt/sandbox.off` exists.
+    pub sandbox: bool,
 }
 
 /// Loads kernel modules (`/sbin/kmodloader`, from ubox, kept in the image). Bounded to 60 s;
@@ -119,6 +125,13 @@ pub fn build_services(ctx: &ServiceContext) -> Vec<ServiceSpec> {
         hostapd.condition_path_exists = Some(conf.into());
         out.push(hostapd);
     }
+    if ctx.sandbox {
+        for spec in &mut out {
+            if profile_for(&spec.name).is_some() {
+                spec.sandbox = Some(spec.name.clone());
+            }
+        }
+    }
     if ctx.ssh_enabled {
         let mut ssh = ServiceSpec::new("dropbear", &["/usr/sbin/dropbear", "-F", "-R"]);
         ssh.restart = RestartPolicy::Always;
@@ -151,11 +164,42 @@ mod tests {
             apply_present: true,
             ssh_enabled: false,
             radio_phys: vec![0, 1],
+            sandbox: true,
         }
     }
 
     fn names(specs: &[ServiceSpec]) -> Vec<&str> {
         specs.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn network_daemons_are_confined_unless_disabled() {
+        let confined = |c: &ServiceContext| -> Vec<String> {
+            build_services(c)
+                .into_iter()
+                .filter_map(|s| s.sandbox)
+                .collect()
+        };
+        assert_eq!(
+            confined(&ctx()),
+            ["dnsmasq", "odhcpd", "hostapd-phy0", "hostapd-phy1"]
+        );
+        let off = ServiceContext {
+            sandbox: false,
+            ..ctx()
+        };
+        assert!(
+            confined(&off).is_empty(),
+            "sandbox.off disables every profile"
+        );
+        let mut ssh = ctx();
+        ssh.ssh_enabled = true;
+        assert!(
+            build_services(&ssh)
+                .iter()
+                .any(|s| s.name == "dropbear" && s.sandbox.is_none()),
+            "no profile for dropbear"
+        );
     }
 
     #[test]

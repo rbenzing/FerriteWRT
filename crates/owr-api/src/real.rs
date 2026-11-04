@@ -1067,6 +1067,7 @@ mod tests {
             apply_present: true,
             ssh_enabled: false,
             radio_phys: vec![0],
+            sandbox: true,
         };
         let names: Vec<String> = owr_init::services::build_services(&ctx)
             .into_iter()
