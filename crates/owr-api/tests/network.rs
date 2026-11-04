@@ -109,6 +109,7 @@ async fn start(tls: Option<TlsConfig>, dir: &std::path::Path) -> std::net::Socke
         ui_enabled: true,
         ui_dir: None,
         audit_log_path: dir.join("audit.log"),
+        upload_dir: dir.join("upload"),
     };
     tokio::spawn(serve_on(listener, cfg));
     addr

@@ -9,7 +9,8 @@
 //! | `network_status` | rtnetlink dump (`owr_net::linux::observe`) + the persisted DHCP lease |
 //! | `wireless_status` | the hostapd control sockets |
 //! | `dhcp_leases` | the dnsmasq lease file |
-//! | `logs`, `services`, `service_action`, `reboot` | init's control socket (`owr_init::client`) |
+//! | `logs`, `services`, `service_action`, `reboot`, `upgrade` | init's control socket (`owr_init::client`) |
+//! | `upgrade_check` | `owr_upgrade::bundle::verify` against the release key, the board and this version |
 //!
 //! Everything that blocks (files, sockets, argon2) runs in `spawn_blocking`. Operations that
 //! read-modify-write the configuration hold one async mutex, so concurrent saves, restores
@@ -27,7 +28,10 @@ use owr_board::{Board, BoardError};
 use owr_common::{Outcome, paths};
 use owr_config::{Config, ConfigError, Role as CfgRole, Secret, Store, User};
 use owr_init::client::{ClientError, InitClient};
+use owr_init::control::UpgradeRequest;
 use owr_net::Observed;
+use owr_upgrade::bundle::{self, Expect};
+use owr_upgrade::release::parse_pubkey;
 use owr_wifi::sys::ctrl::HostapdCtl;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
@@ -37,7 +41,8 @@ use crate::backend::{BackendResult, BoxFuture, SystemBackend};
 use crate::document::{check, issues_to_errors, parse_doc};
 use crate::dto::{
     ApplyReport, BackendError, BoardId, Firmware, Lease, LogEntry, NetworkStatus, Role,
-    ServiceAction, ServiceStatus, SystemStatus, UserInfo, ValidationErrors, WirelessStatus,
+    ServiceAction, ServiceStatus, SystemStatus, UpgradeInfo, UserInfo, ValidationErrors,
+    WirelessStatus,
 };
 use crate::password;
 use crate::procfs::{
@@ -45,6 +50,7 @@ use crate::procfs::{
     parse_uptime,
 };
 use crate::secrets::{find_placeholders, unredact};
+use crate::upgrade::running_version;
 use crate::view::{self, ApProbe};
 
 /// Largest file read into memory (config backup, lease file, `/proc` files).
@@ -69,6 +75,8 @@ pub struct RealConfig {
     pub leases_file: PathBuf,
     /// Directory with one hostapd control socket per BSS.
     pub hostapd_ctrl_dir: PathBuf,
+    /// The release public key firmware upgrades are verified against.
+    pub release_key: PathBuf,
 }
 
 impl Default for RealConfig {
@@ -81,6 +89,7 @@ impl Default for RealConfig {
             nft_bin: Paths::default().nft_bin,
             leases_file: run_dir.join("dhcp.leases"),
             hostapd_ctrl_dir: owr_wifi::ctrl_dir(),
+            release_key: PathBuf::from(paths::RELEASE_KEY_FILE),
             run_dir,
         }
     }
@@ -286,6 +295,47 @@ fn init_error(e: &ClientError) -> BackendError {
             BackendError::Internal(e.to_string())
         }
     }
+}
+
+/// init refusing an upgrade (bad bundle, failsafe, already upgrading) is the user's to see.
+fn upgrade_error(e: ClientError) -> BackendError {
+    match e {
+        ClientError::Refused(reason) => BackendError::Refused(reason),
+        other => init_error(&other),
+    }
+}
+
+/// Verify the bundle in `dir` against the release key at `key_path`, `board` and this
+/// version (blocking: hashes the whole image).
+fn check_bundle(
+    dir: &Path,
+    key_path: &Path,
+    board: &Board,
+    allow_downgrade: bool,
+) -> BackendResult<UpgradeInfo> {
+    let key = read_text(key_path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| parse_pubkey(&text).ok_or_else(|| "not a public key".to_owned()))
+        .map_err(|e| {
+            error!(path = %key_path.display(), error = %e, "release key unusable");
+            BackendError::Internal(format!("release key {}: {e}", key_path.display()))
+        })?;
+    let running = running_version()
+        .ok_or_else(|| BackendError::Internal("the running version does not parse".into()))?;
+    let expect = Expect {
+        board_id: &board.board.id,
+        profile: &board.openwrt.profile,
+        current: &running,
+    };
+    let verified = bundle::verify(dir, &key, &expect, allow_downgrade)
+        .map_err(|e| BackendError::Refused(e.to_string()))?;
+    Ok(UpgradeInfo {
+        image: verified.image_name,
+        downgrade: verified.version < running,
+        version: verified.version.to_string(),
+        board: board.board.id.clone(),
+        running: running.to_string(),
+    })
 }
 
 const fn role_out(role: CfgRole) -> Role {
@@ -918,6 +968,44 @@ impl SystemBackend for RealBackend {
                 .await
         })
     }
+
+    fn upgrade_check<'a>(
+        &'a self,
+        dir: &'a Path,
+        allow_downgrade: bool,
+    ) -> BoxFuture<'a, BackendResult<UpgradeInfo>> {
+        Box::pin(async move {
+            let (dir, key, board) = (
+                dir.to_path_buf(),
+                self.cfg.release_key.clone(),
+                Arc::clone(&self.board),
+            );
+            blocking(move || check_bundle(&dir, &key, &board, allow_downgrade)).await
+        })
+    }
+
+    fn upgrade<'a>(
+        &'a self,
+        dir: &'a Path,
+        allow_downgrade: bool,
+        wipe_settings: bool,
+    ) -> BoxFuture<'a, BackendResult<()>> {
+        Box::pin(async move {
+            let dir = dir.to_str().map(str::to_owned).ok_or_else(|| {
+                BackendError::Internal(format!("upload directory {} is not UTF-8", dir.display()))
+            })?;
+            info!(%dir, allow_downgrade, wipe_settings, "handing the firmware upgrade to init");
+            let req = UpgradeRequest {
+                dir,
+                allow_downgrade,
+                wipe_settings,
+            };
+            // Init's verdict is kept as a value: a refusal must reach the user as such.
+            self.init(move |client| Ok(client.upgrade(&req)))
+                .await?
+                .map_err(upgrade_error)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1001,6 +1089,18 @@ mod tests {
         ));
         assert!(matches!(
             init_error(&ClientError::Malformed("x".into())),
+            BackendError::Internal(_)
+        ));
+    }
+
+    #[test]
+    fn upgrade_refusals_reach_the_user() {
+        assert!(matches!(
+            upgrade_error(ClientError::Refused("failsafe mode".into())),
+            BackendError::Refused(m) if m == "failsafe mode"
+        ));
+        assert!(matches!(
+            upgrade_error(ClientError::BadUpgradeDir),
             BackendError::Internal(_)
         ));
     }

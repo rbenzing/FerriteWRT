@@ -6,9 +6,13 @@
 
 use std::collections::VecDeque;
 use std::future::ready;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use owr_upgrade::Version;
+use owr_upgrade::bundle::BundleError;
+use owr_upgrade::release::{SIG_FILE, SUMS_FILE};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -17,10 +21,11 @@ use crate::document;
 use crate::dto::{
     ApStatus, ApplyReport, BackendError, BoardId, Client, Firmware, Iface, Lease, LogEntry,
     MemInfo, NetworkStatus, RadioStatus, Role, ServiceAction, ServiceStatus, SystemStatus,
-    UserInfo, ValidationErrors, WanStatus, WirelessStatus,
+    UpgradeInfo, UserInfo, ValidationErrors, WanStatus, WirelessStatus,
 };
 use crate::password;
 use crate::secrets::{find_placeholders, redact, unredact};
+use crate::upgrade::running_version;
 
 const MAX_LOGS: usize = 2000;
 const SEED_LOGS: u64 = 1200;
@@ -46,6 +51,7 @@ struct State {
     logs: VecDeque<LogEntry>,
     next_seq: u64,
     services: Vec<ServiceStatus>,
+    upgrades: Vec<MockUpgrade>,
 }
 
 impl State {
@@ -85,6 +91,14 @@ impl State {
         }
         doc
     }
+}
+
+/// A firmware upgrade the mock accepted (recorded, never performed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MockUpgrade {
+    pub dir: PathBuf,
+    pub allow_downgrade: bool,
+    pub wipe_settings: bool,
 }
 
 /// In-memory backend; see the module docs.
@@ -153,6 +167,7 @@ impl MockBackend {
                 logs,
                 next_seq: SEED_LOGS.saturating_add(1),
                 services,
+                upgrades: Vec::new(),
             }),
             started: Instant::now(),
         }
@@ -180,6 +195,63 @@ impl MockBackend {
     fn uptime(&self) -> u64 {
         SEED_UPTIME_SECS.saturating_add(self.started.elapsed().as_secs())
     }
+
+    /// The firmware upgrades accepted so far, oldest first.
+    pub fn upgrades(&self) -> Vec<MockUpgrade> {
+        self.lock().upgrades.clone()
+    }
+}
+
+/// The mock's stand-in for bundle verification: `SHA256SUMS`, its signature and an image
+/// named for the mock board must be in `dir`; the version comes from the image name. Nothing
+/// is hashed or signature-checked. Refusals carry the same texts as the real verifier.
+fn check_bundle(dir: &Path, allow_downgrade: bool) -> BackendResult<UpgradeInfo> {
+    for file in [SUMS_FILE, SIG_FILE] {
+        if !dir.join(file).is_file() {
+            return Err(BackendError::Refused(format!("{file}: not uploaded")));
+        }
+    }
+    let board = mock_board()
+        .map_err(|e| BackendError::Internal(format!("builtin board: {e}")))?
+        .board
+        .id;
+    let image = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .find_map(|name| {
+            let version = name
+                .strip_prefix("ferritewrt-")?
+                .strip_prefix(board.as_str())?
+                .strip_prefix("-v")?
+                .strip_suffix("-sysupgrade.bin")
+                .and_then(Version::parse)?;
+            Some((name, version))
+        });
+    let Some((image, version)) = image else {
+        return Err(BackendError::Refused(
+            BundleError::NoImage(board).to_string(),
+        ));
+    };
+    let running = running_version()
+        .ok_or_else(|| BackendError::Internal("the running version does not parse".into()))?;
+    let downgrade = version < running;
+    if downgrade && !allow_downgrade {
+        return Err(BackendError::Refused(
+            BundleError::Downgrade {
+                from: running.to_string(),
+                to: version.to_string(),
+            }
+            .to_string(),
+        ));
+    }
+    Ok(UpgradeInfo {
+        image,
+        version: version.to_string(),
+        board,
+        running: running.to_string(),
+        downgrade,
+    })
 }
 
 /// The board the mock pretends to run on.
@@ -742,6 +814,40 @@ impl SystemBackend for MockBackend {
                     warnings: Vec::new(),
                 }
             });
+        Box::pin(ready(result))
+    }
+
+    fn upgrade_check<'a>(
+        &'a self,
+        dir: &'a Path,
+        allow_downgrade: bool,
+    ) -> BoxFuture<'a, BackendResult<UpgradeInfo>> {
+        Box::pin(ready(check_bundle(dir, allow_downgrade)))
+    }
+
+    fn upgrade<'a>(
+        &'a self,
+        dir: &'a Path,
+        allow_downgrade: bool,
+        wipe_settings: bool,
+    ) -> BoxFuture<'a, BackendResult<()>> {
+        // Like init, refuse a bundle that does not pass the check.
+        let result = check_bundle(dir, allow_downgrade).map(|info| {
+            let mut state = self.lock();
+            state.log(
+                4,
+                "owr-init",
+                format!(
+                    "upgrade to {} requested (mock: ignored, wipe settings: {wipe_settings})",
+                    info.version
+                ),
+            );
+            state.upgrades.push(MockUpgrade {
+                dir: dir.to_path_buf(),
+                allow_downgrade,
+                wipe_settings,
+            });
+        });
         Box::pin(ready(result))
     }
 }

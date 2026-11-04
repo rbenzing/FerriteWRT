@@ -44,7 +44,7 @@ integrity and performance**, then ease of use.
 - **🧭 One configuration file** — typed, versioned TOML; unknown keys are rejected, writes are atomic
 - **♻️ Idempotent apply** — observe, plan, apply, verify; re-running an apply never flaps a working link
 - **🌐 Management over HTTPS only** — argon2id passwords, CSRF, admin and viewer roles, audit log, strict CSP
-- **📦 Signed releases** — every firmware release ships `SHA256SUMS`, an ed25519 signature and GitHub build-provenance attestations
+- **📦 Signed releases and upgrades** — every firmware release ships `SHA256SUMS`, an ed25519 signature and GitHub build-provenance attestations; a running router installs a release only after checking that signature, the board and the version
 - **🖥️ Web UI without a framework** — vanilla ES modules, no inline code, verified in Chromium
 - **🔧 Data-driven hardware** — ports, radios, LEDs and buttons come from one `boards/<router>.toml` per device
 
@@ -140,6 +140,11 @@ owr release verify <download-dir> --pubkey keys/release.pub
 # or, with coreutils only:
 sha256sum -c SHA256SUMS
 ```
+
+A running router upgrades itself from the same three files (the `-sysupgrade.bin`,
+`SHA256SUMS`, `SHA256SUMS.sig`): upload them under **System** in the web UI, or copy them
+over and run `owr upgrade <dir>`. The router checks the signature against the key it was
+built with, the board and the version before anything is written, and keeps your settings.
 
 How versions, signatures and hashes fit together is in [docs/VERSIONING.md](docs/VERSIONING.md).
 

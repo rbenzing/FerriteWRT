@@ -70,7 +70,12 @@ patch release.
 ## Follow-ups queued
 
 - Unify `argon2`/`password-hash` on 0.6 (digest 0.11) to drop duplicate crate versions.
-- The phase 2 list in [ROADMAP.md](ROADMAP.md), `owr-upgrade` first.
+- The phase 2 list in [ROADMAP.md](ROADMAP.md).
+- First upgrade on hardware: from a flashed v0.3.0 or later, upgrade to the next release
+  through the UI and through `owr upgrade`; watch the console for the prune, the three
+  writes and the reboot, and check that settings survived. Untested so far: the partition
+  writes on the eMMC, `mlockall` under the running rootfs, and the GL.iNet U-Boot accepting
+  the kernel written this way.
 
 ## Binary hardening note
 

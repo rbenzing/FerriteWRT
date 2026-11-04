@@ -20,7 +20,8 @@ The UI is embedded with `include_dir!` at compile time; touch `src/ui.rs` to re-
 ## Responses
 
 `{"ok": true, "data": ...}` or `{"ok": false, "error": {"code", "message", "details?"}}`.
-Backend errors map to 503 / 422 / 404 / 500; validation details are
+Backend errors map to 503 / 422 / 400 (`Refused`: the message is for the user, e.g. why an upgrade
+bundle failed verification) / 404 / 500; validation details are
 `{"errors": [{"path": "wireless.aps[0].ssid", "message": "..."}]}`.
 
 ## Endpoints (`/api/v1`)
@@ -38,6 +39,10 @@ Backend errors map to 503 / 422 / 404 / 500; validation details are
 | `POST /services/{name}/{restart\|reload}`, `POST /system/reboot` | admin | |
 | `PUT /users/{name}` `{role,enabled,password?}`, `DELETE /users/{name}` | admin | not self, never the last admin |
 | `GET /system/backup`, `POST /system/restore` | admin | octet-stream; restore body <= 1 MiB, logs everyone out |
+| `PUT /system/upgrade/files/{name}` | admin | raw body streamed to the upload dir; `name` is `SHA256SUMS` (<= 64 KiB), `SHA256SUMS.sig` (<= 4 KiB) or `ferritewrt-*-sysupgrade.bin` (<= 256 MiB), else 400; too large -> 413 and nothing kept; an image replaces older images; `{name,size}` |
+| `DELETE /system/upgrade/files` | admin | removes every upload, `{cleared}` |
+| `POST /system/upgrade/check` `{allow_downgrade?}` | admin | verifies the uploads (signature, hash, image, board, version): `{image,version,board,running,downgrade}`; a bad bundle is 400 with the reason |
+| `POST /system/upgrade` `{allow_downgrade?,wipe_settings?}` | admin | hands the uploads to init (which verifies again, writes the image, reboots): `{upgrading:true}`; init's refusal is 400 with its reason |
 
 Everything else under `/api` is a JSON 404. Any other path serves the UI (SPA fallback to `index.html`).
 
@@ -63,7 +68,8 @@ Headers on every response: `Content-Security-Policy` (self only, no inline), `X-
 self-signed certificate is regenerated on factory reset). API responses are `Cache-Control: no-store`;
 UI files are `no-cache` with an `ETag` (`If-None-Match` incl. `*` and `W/` tags), so upgrades show at once.
 A missing file with an extension (`/js/x.js`) is a 404; only extension-less paths fall back to `index.html`.
-Limits: 256 KiB bodies (1 MiB restore), 30 s request timeout, 10 s header/handshake timeout, 128 connections
+Limits: 256 KiB bodies (1 MiB restore, per-file limits for upgrade uploads), 30 s request timeout (240 s
+for `/system/upgrade*`: large uploads, hashing, init staging), 10 s header/handshake timeout, 128 connections
 (16 per client address, IPv6 per /64), 5 min maximum connection lifetime (bounds stalled writers).
 Mutating backend calls run in a detached task, so a client disconnect or the timeout cannot abort them
 half-way; the request is then audited as `aborted`.
@@ -84,10 +90,12 @@ a key that group/others can read chmods it to 0600 and warns. `tls::fingerprint_
 
 Implement `owr_api::SystemBackend` (object safe, `BoxFuture` methods; see `MockBackend` for a complete
 example) and call `owr_api::serve(ServerConfig { bind, tls, session_ttl, backend, ui_enabled, ui_dir,
-audit_log_path })`. Contract: `config()` returns redacted JSON and `save_config` treats `"***"` as
+audit_log_path, upload_dir })`. Contract: `config()` returns redacted JSON and `save_config` treats `"***"` as
 "keep the stored secret"; `verify_password` owns the hashes and must do equal work for unknown users;
 `set_user(.., None)` keeps the existing hash; `set_password` changes only the hash (self-service change,
-so a stale session cannot revert a role edit); `restore` may not remove the last enabled admin.
+so a stale session cannot revert a role edit); `restore` may not remove the last enabled admin;
+`upgrade_check` refuses a bad bundle with `BackendError::Refused` (shown to the user) and changes nothing;
+`upgrade` returns once init accepted (init's refusal is `Refused`).
 `owr_api::router(&cfg)` returns the router without a socket.
 
 ## Production wiring (`src/real.rs`, Linux only)
@@ -98,14 +106,15 @@ owr-api [--bind ADDR] [--tls-dir D] [--run-dir D] [--init-sock P] [--nft P] [--b
 
 Defaults come from `owr_common::paths`: board `/etc/ferritewrt/board.toml`, config `/etc/ferritewrt/config.toml`,
 run dir `/run/ferritewrt` (init socket `<run>/init.sock`, leases `<run>/dhcp.leases`, hostapd sockets
-`<run>/hostapd`), TLS dir `/etc/ferritewrt/tls`, audit log `/etc/ferritewrt/audit.log`, nft `/usr/sbin/nft`.
+`<run>/hostapd`, firmware uploads `<run>/upgrade-upload`, emptied at start), release key
+`/usr/share/ferritewrt/release.pub`, TLS dir `/etc/ferritewrt/tls`, audit log `/etc/ferritewrt/audit.log`, nft `/usr/sbin/nft`.
 Startup: load the board; load the config (writes the board defaults if there is none, like `owr-apply boot`);
 `bind` defaults to `network.lan.ipv4` host address on `services.api.port` (443), or `0.0.0.0:443` with a warning
 when the config is unusable; the certificate is created in `--tls-dir` with the LAN address and the hostname as
 extra SANs and its SHA-256 fingerprint is printed; the session TTL is `services.api.session_ttl`.
 
 `RealBackend::new(RealConfig { board_path, config_path, run_dir, init_sock, nft_bin, leases_file,
-hostapd_ctrl_dir })` implements `SystemBackend`:
+hostapd_ctrl_dir, release_key })` implements `SystemBackend`:
 
 | call | how |
 |---|---|
@@ -118,6 +127,8 @@ hostapd_ctrl_dir })` implements `SystemBackend`:
 | `dhcp_leases` | dnsmasq lease file, IPv4 lines only, at most 4096 lines |
 | `firewall_preview` | `build_plans` -> `owr_fw::render` |
 | `logs`, `services`, `service_action`, `reboot` | `owr_init::client::InitClient` (journal timestamps are converted from boot-relative to wall-clock milliseconds) |
+| `upgrade_check` | `owr_upgrade::bundle::verify` (in `spawn_blocking`: it hashes the image) against `release_key`, the board id/profile and `CARGO_PKG_VERSION`; `BundleError` -> `Refused`, an unreadable key -> `Internal` |
+| `upgrade` | `InitClient::upgrade` with the upload dir; `ClientError::Refused` -> `Refused`, init down -> `Unavailable` |
 | users | stored in `config.toml`; `set_user`/`set_password`/`delete_user` read-modify-write under the same mutex as `save_config`/`restore` and refuse to leave no enabled admin; `verify_password` runs Argon2id in `spawn_blocking` against the stored hash (dummy hash for unknown users) |
 
 The pure parts (`procfs`: /proc and lease parsers; `view`: observed state -> DTOs; `document`, `secrets`)

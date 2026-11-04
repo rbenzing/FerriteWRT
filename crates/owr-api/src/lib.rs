@@ -24,6 +24,7 @@ pub mod server;
 pub mod session;
 pub mod tls;
 pub mod ui;
+mod upgrade;
 pub mod view;
 
 pub use backend::{BackendResult, BoxFuture, SystemBackend};

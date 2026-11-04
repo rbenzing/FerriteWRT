@@ -43,7 +43,7 @@ the build it came from.
 | Path | Content |
 |---|---|
 | `images/ferritewrt-B-vV-factory.bin` | full image for U-Boot recovery / TFTP flashing (OpenWrt's `*-squashfs-factory.bin`) |
-| `images/ferritewrt-B-vV-sysupgrade.bin` | upgrade image (OpenWrt's `*-squashfs-sysupgrade.bin`; no upgrader in the image until `owr-upgrade`) |
+| `images/ferritewrt-B-vV-sysupgrade.bin` | upgrade image (OpenWrt's `*-squashfs-sysupgrade.bin`), installed on a running router by `owr upgrade` or the web UI (`crates/owr-upgrade`) |
 | `images/ferritewrt-B-vV-initramfs-kernel.bin` | RAM-only image for the safe first boot |
 | `images/ferritewrt-B-vV-binaries.tar.gz` | the static aarch64 Rust binaries (`owr`, `owr-api`, `owr-apply`, `owr-init`); reproducible tar (`--sort=name --mtime=@0 --owner=0 --group=0`, `gzip -n`) |
 | `images/build-info.txt` | version, OpenWrt/repo revisions, kernel, rustc, UTC time, and OpenWrt's original file names (`image:` lines) |

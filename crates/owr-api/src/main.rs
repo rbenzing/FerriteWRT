@@ -16,6 +16,9 @@ use owr_api::{ServerConfig, TlsConfig, serve};
 
 const DEV_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
 const SESSION_TTL: Duration = Duration::from_mins(30);
+/// Firmware upload directory below the run directory (production).
+#[cfg(target_os = "linux")]
+const UPLOAD_DIR: &str = "upgrade-upload";
 
 /// ferritewrt management API and web UI.
 #[derive(Debug, Parser)]
@@ -121,6 +124,8 @@ async fn run_dev(args: Args) -> Result<(), String> {
         _ => None,
     };
     let audit_log_path = std::env::temp_dir().join("owr-api-dev-audit.log");
+    let upload_dir =
+        std::env::temp_dir().join(format!("owr-api-dev-upgrade-{}", std::process::id()));
     eprintln!(
         "owr-api --dev: mock backend on {}://{bind}/ (audit log: {})",
         if tls.is_some() { "https" } else { "http" },
@@ -134,6 +139,7 @@ async fn run_dev(args: Args) -> Result<(), String> {
         ui_enabled: true,
         ui_dir: args.ui_dir,
         audit_log_path,
+        upload_dir,
     })
     .await
 }
@@ -157,6 +163,13 @@ async fn run_production(args: Args) -> Result<(), String> {
     }
     if let Some(config) = args.config {
         real.config_path = config;
+    }
+    // Uploads live in RAM (tmpfs): drop whatever a previous run of the API left behind.
+    let upload_dir = real.run_dir.join(UPLOAD_DIR);
+    if let Err(e) = std::fs::remove_dir_all(&upload_dir)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(dir = %upload_dir.display(), error = %e, "removing old upgrade uploads failed");
     }
     let backend = RealBackend::new(real).map_err(|e| format!("loading the board: {e}"))?;
     let info = backend.startup();
@@ -191,6 +204,7 @@ async fn run_production(args: Args) -> Result<(), String> {
         ui_enabled: true,
         ui_dir: args.ui_dir,
         audit_log_path: PathBuf::from(AUDIT_LOG),
+        upload_dir,
     })
     .await
 }

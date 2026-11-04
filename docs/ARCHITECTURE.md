@@ -24,7 +24,7 @@ Adding a router is described in [PORTING.md](PORTING.md).
 | Web UI + API | uhttpd + LuCI (Lua/JS) + rpcd ACLs | **owr-api** (axum, rustls, argon2id, RBAC, CSRF) + embedded static UI | |
 | Logging | logd/ubox | owr-init journal (bounded ring buffer + persistent) | |
 | Storage/mounts | fstools (block, mount_root) | owr-init mounts (squashfs rootfs + f2fs/ext4 overlay on a GPT partition) | UBI is planned |
-| Upgrade | sysupgrade + fwtool | **owr-upgrade** (verify metadata + signature, write the image) | phase 2 |
+| Upgrade | sysupgrade + fwtool | **owr-upgrade** (verify the signed release bundle, write kernel + rootfs, keep settings); run by owr-init | single slot: the reference board has no second kernel/rootfs partition |
 | Shell | busybox ash | busybox kept for rescue console only; no shell in the control plane | phase 2 removal |
 | SSH | dropbear | optional, off by default; phase 2: russh | |
 | Package manager | opkg/apk | none: immutable, signed image | security |
@@ -42,6 +42,7 @@ crates/
   owr-init     PID 1: mounts, uevent, services, reaping, journal, watchdog, shutdown (linux)
   owr-api      HTTPS API + embedded UI, auth, sessions, RBAC, audit log             (pure + linux)
   owr-apply    maps owr-config -> fw/wifi/net plans and drives appliers             (pure + linux)
+  owr-upgrade  release signature contract, sysupgrade reader, verify + write plan   (pure)
   owr-cli      `owr` binary: validate, render, diff, apply, board                   (bin)
 build/
   openwrt/common.diffconfig    OpenWrt config shared by every board (hardening, removed services)

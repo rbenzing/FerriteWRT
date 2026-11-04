@@ -23,13 +23,15 @@
 | `render <net\|fw\|wifi\|dnsmasq\|odhcpd\|sysctl> [--json] [--reveal-secrets]` | what `owr-apply` would apply |
 | `check` | validate config against the board, build all plans, print a summary; exit 1 on failure |
 | `status [--json]` | service table from init over `/run/ferritewrt/init.sock` |
+| `upgrade <dir> [--downgrade] [--wipe-settings]` | hand a release bundle (sysupgrade image, `SHA256SUMS`, `SHA256SUMS.sig`) to init, which verifies it, writes it and reboots; settings are kept unless `--wipe-settings` |
+| `upgrade --check <dir> [--pubkey f]` | the same verification (signature, hash, board, version) anywhere; changes nothing |
 | `release keygen | sums | manifest | sign | verify | show` | build, sign and verify release artifacts (see "Release signing") |
 
 `render`: `fw`, `dnsmasq`, `odhcpd` print text; `net` and `sysctl` print JSON; `wifi` prints one
 `# --- <phy> ---` hostapd.conf per radio (`--json`: the radio plans). Wi-Fi passphrases are
 printed as `***` unless `--reveal-secrets`. Without a config file `render` uses the board defaults.
 
-Exit codes: 0 ok, 1 issues found or error, 2 `status` on a non-router host.
+Exit codes: 0 ok, 1 issues found or error, 2 `status` or `upgrade` (without `--check`) on a non-router host.
 
 ## Offline bootstrap
 
@@ -50,7 +52,7 @@ restricted file or `read -rs`.
 ## Release signing
 
 `owr release ...` produces and checks the files that make a release trustworthy. The formats
-below are a contract: other tools (and a future `owr-upgrade`) rely on the exact bytes.
+below are a contract: other tools rely on the exact bytes. The parser and verifier live in `crates/owr-upgrade` (`release`), shared with the router's upgrade path.
 
 | file | content |
 |---|---|

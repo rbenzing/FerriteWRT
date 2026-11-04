@@ -179,6 +179,21 @@ pub struct ApplyReport {
     pub warnings: Vec<String>,
 }
 
+/// A firmware upgrade bundle that passed verification (signature, hash, image, board).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpgradeInfo {
+    /// File name of the sysupgrade image.
+    pub image: String,
+    /// Firmware version of the image.
+    pub version: String,
+    /// Board the image is built for.
+    pub board: String,
+    /// Firmware version running now.
+    pub running: String,
+    /// `version` is older than `running`: installing it needs `allow_downgrade`.
+    pub downgrade: bool,
+}
+
 /// One field-level validation problem.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldError {
@@ -233,13 +248,17 @@ impl fmt::Display for ValidationErrors {
 
 impl std::error::Error for ValidationErrors {}
 
-/// Failure reported by a backend; mapped to HTTP 503/422/404/500.
+/// Failure reported by a backend; mapped to HTTP 503/422/400/404/500.
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
     #[error("backend unavailable: {0}")]
     Unavailable(String),
     #[error("invalid input: {0}")]
     Invalid(ValidationErrors),
+    /// The request was understood but refused; the message is meant for the user (for
+    /// example why an upgrade bundle failed verification) and reaches the client.
+    #[error("refused: {0}")]
+    Refused(String),
     #[error("not found")]
     NotFound,
     #[error("internal error: {0}")]

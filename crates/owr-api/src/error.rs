@@ -94,6 +94,10 @@ impl ApiError {
         Self::new(StatusCode::CONFLICT, message)
     }
 
+    pub(crate) fn payload_too_large(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::PAYLOAD_TOO_LARGE, message)
+    }
+
     pub(crate) fn too_many_requests(retry_after_secs: u64) -> Self {
         Self {
             retry_after: Some(retry_after_secs),
@@ -126,6 +130,7 @@ impl From<BackendError> for ApiError {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, "backend unavailable")
             }
             BackendError::Invalid(errors) => Self::validation(&errors),
+            BackendError::Refused(msg) => Self::bad_request(msg),
             BackendError::NotFound => Self::not_found(),
             BackendError::Internal(msg) => {
                 // Details stay in the log; clients get a generic message.
@@ -203,6 +208,10 @@ mod tests {
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(s(BackendError::NotFound), StatusCode::NOT_FOUND);
+        assert_eq!(
+            s(BackendError::Refused("x".into())),
+            StatusCode::BAD_REQUEST
+        );
         assert_eq!(
             s(BackendError::Internal("x".into())),
             StatusCode::INTERNAL_SERVER_ERROR

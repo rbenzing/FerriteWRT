@@ -63,7 +63,7 @@ every artifact, which ties the file hashes to the exact workflow run and commit.
   `SHA256SUMS`, produced by `owr release sign` in the release workflow. The private
   key lives only in the `OWR_RELEASE_KEY` GitHub secret (32-byte seed as hex). The
   public key is committed at `keys/release.pub` and compiled into the firmware so
-  the router (`owr-upgrade`, phase 2) can refuse unsigned or tampered images.
+  the router (`owr-upgrade`) refuses unsigned or tampered images.
 - Verify a download on any machine:
 
   ```bash

@@ -6,6 +6,32 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-04
+
+### Added
+- Firmware upgrades from a running router (`crates/owr-upgrade`). A bundle is the release's
+  `-sysupgrade.bin`, `SHA256SUMS` and `SHA256SUMS.sig`; it is verified against the release
+  key the image ships (`/usr/share/ferritewrt/release.pub`), then the image's hash, its
+  `BOARD=` and its version (no downgrade unless asked). `owr-init` stages and verifies the
+  bundle before answering, then, with every other process stopped, keeps only
+  `/etc/ferritewrt` in the overlay, locks itself in memory and writes kernel and rootfs in
+  OpenWrt's order with read-back before rebooting. Single slot: recovery from a failed
+  write is the bootloader's.
+- `owr upgrade <dir> [--downgrade] [--wipe-settings]`, and `owr upgrade --check <dir>` to
+  run the same verification anywhere.
+- Control socket request `upgrade <dir> [downgrade] [wipe]`.
+- Web UI and API: System -> Firmware upgrade (admin only). The three release files are
+  streamed to the router (`PUT /api/v1/system/upgrade/files/{name}`, release names only,
+  images up to 128 MiB), checked (`POST /api/v1/system/upgrade/check`: version, board,
+  signature) and installed (`POST /api/v1/system/upgrade`) after an inline confirmation;
+  "Reset all settings" is off by default, a downgrade must be ticked explicitly.
+
+### Changed
+- The release signature contract (`SHA256SUMS`, `SHA256SUMS.sig`) lives in `owr-upgrade`
+  and is shared by `owr release` and the router; release versions now follow semver
+  pre-release rules strictly (no empty identifiers such as `1.2.3-a..b`).
+- The image build installs `keys/release.pub` and checks it in the rootfs.
+
 ## [0.2.1] - 2026-11-04
 
 ### Security

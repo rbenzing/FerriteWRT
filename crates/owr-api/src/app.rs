@@ -2,6 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::extract::{ConnectInfo, Request};
@@ -55,6 +56,8 @@ pub(crate) struct Inner {
     /// TLS in use: cookies get `Secure`, responses get HSTS.
     pub secure: bool,
     pub ui: Option<UiSource>,
+    /// Where firmware upgrade files are uploaded to (created on demand).
+    pub upload_dir: PathBuf,
     /// Serialises user-management operations (setup, create/modify/delete).
     pub admin_lock: tokio::sync::Mutex<()>,
     /// Serialises password verification so the failure limiter cannot be raced.

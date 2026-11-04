@@ -67,11 +67,12 @@ A reboot/poweroff request waits (max 1 s) until its reply is written.
 One request line (max 256 bytes) per connection, max 64 connections:
 `status` (JSON), `restart <name>`, `reload <name>` (SIGHUP), `journal <since_seq> <limit>`
 (NDJSON, limit <= 1000, reply capped at 1 MiB, streamed entry by entry, max 4 concurrent journal
-requests), `reboot`, `poweroff`. Replies are `{"ok":true}` or `{"ok":false,"error":"..."}`.
+requests), `reboot`, `poweroff`, `upgrade <dir> [downgrade] [wipe]`. Replies are `{"ok":true}` or `{"ok":false,"error":"..."}`.
 `status` services carry `name, state, pid, since_unix, restarts` (the `owr-api` DTO) plus
 `failures, oneshot, healthy`; journal entries are `{seq, ts_ms, prio, source, msg}` with `source`
 one of `"kernel"`, `"init"`, `"service:<name>"`. Journal: 1 MiB / 8192 entries in RAM; persisted to
 `/etc/ferritewrt/journal/journal.{0,1}` (512 KiB each) every 5 min, on failure and at shutdown.
+`upgrade` (absolute path of `[A-Za-z0-9._/-]`, no `..`) copies the bundle into `/run/ferritewrt/upgrade` (0700), verifies it against `/usr/share/ferritewrt/release.pub` and plans the writes (`owr-upgrade`) before answering; it is refused in failsafe and without the data partition. The reply may take up to 60 s. On `ok` the runtime stops like a reboot; `shutdown::finish`, after the process sweep, prunes the overlay to `/etc/ferritewrt`, writes the factory-reset marker if `wipe`, locks init in memory (`mlockall`), writes kernel and rootfs with read-back and reboots. Nothing is written if a preparation step fails; a failed write is reported on the console (bootloader recovery).
 Client: `owr_init::client` (pure std, sync; `InitClient` is unix-only, the framing and reply parsers build on every host)
 is what `owr-api` and `owr status` use: one connection per call, 2 s timeouts, replies capped at 1 MiB, service names
 validated with the same rule as init (`ClientError::{BadName, UnknownService, Refused, ..}`).

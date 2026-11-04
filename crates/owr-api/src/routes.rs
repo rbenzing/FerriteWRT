@@ -2,14 +2,15 @@
 
 use std::future::Future;
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts, Path, Query, Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
+use owr_upgrade::release::{SIG_FILE, SUMS_FILE};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -22,8 +23,9 @@ use crate::error::{ApiError, ApiResult, ok};
 use crate::middleware::{Access, guard};
 use crate::password;
 use crate::session::SessionView;
+use crate::upgrade::{self, UploadError};
 
-/// Request body limit for everything except restore.
+/// Request body limit for everything except restore and the firmware upload.
 pub(crate) const BODY_LIMIT: usize = 256 * 1024;
 /// Request body limit for `POST /system/restore`.
 pub(crate) const RESTORE_BODY_LIMIT: usize = 1024 * 1024;
@@ -76,12 +78,28 @@ pub(crate) fn api_router(app: &AppState) -> Router<AppState> {
         .route_layer(from_fn_with_state((app.clone(), Access::AdminOnly), guard))
         .layer(RequestBodyLimitLayer::new(RESTORE_BODY_LIMIT));
 
+    // No body limit layer: the handler streams to disk and enforces the limit of each file
+    // name itself (up to `owr_upgrade::bundle::MAX_IMAGE`), answering 413 and removing the
+    // partial file when it is exceeded.
+    let upgrade_files = Router::new()
+        .route("/system/upgrade/files/{name}", put(upload_upgrade_file))
+        .route_layer(from_fn_with_state((app.clone(), Access::AdminOnly), guard));
+
+    let upgrade = Router::new()
+        .route("/system/upgrade/files", delete(clear_upgrade_files))
+        .route("/system/upgrade/check", post(check_upgrade))
+        .route("/system/upgrade", post(start_upgrade))
+        .route_layer(from_fn_with_state((app.clone(), Access::AdminOnly), guard))
+        .layer(RequestBodyLimitLayer::new(BODY_LIMIT));
+
     Router::new()
         .merge(public.layer(RequestBodyLimitLayer::new(BODY_LIMIT)))
         .merge(standard)
         .merge(self_service)
         .merge(backup)
         .merge(restore)
+        .merge(upgrade_files)
+        .merge(upgrade)
 }
 
 // ---------------------------------------------------------------------------
@@ -661,6 +679,93 @@ async fn restore_config(
     .await
 }
 
+// ---------------------------------------------------------------------------
+// Firmware upgrade
+
+fn upload_error(e: UploadError) -> ApiError {
+    match e {
+        UploadError::TooLarge { .. } | UploadError::NoSpace(_) => {
+            ApiError::payload_too_large(e.to_string())
+        }
+        UploadError::Empty | UploadError::Interrupted => ApiError::bad_request(e.to_string()),
+        UploadError::Io(io) => {
+            crate::dto::BackendError::Internal(format!("storing an upgrade upload: {io}")).into()
+        }
+    }
+}
+
+async fn upload_upgrade_file(
+    State(app): State<AppState>,
+    ApiPath(name): ApiPath<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> ApiResult {
+    let Some(limit) = upgrade::limit_for(&name) else {
+        return Err(ApiError::bad_request(format!(
+            "not a release file: expected {SUMS_FILE}, {SIG_FILE} or \
+             ferritewrt-<board>-v<version>-sysupgrade.bin"
+        )));
+    };
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
+    if declared.is_some_and(|n| n > limit) {
+        return Err(upload_error(UploadError::TooLarge { name, limit }));
+    }
+    let size = upgrade::store(&app.upload_dir, &name, limit, body)
+        .await
+        .map_err(upload_error)?;
+    Ok(ok(json!({ "name": name, "size": size })))
+}
+
+async fn clear_upgrade_files(State(app): State<AppState>) -> ApiResult {
+    upgrade::clear(&app.upload_dir).await.map_err(|e| {
+        ApiError::from(crate::dto::BackendError::Internal(format!(
+            "removing the upgrade uploads: {e}"
+        )))
+    })?;
+    Ok(ok(json!({ "cleared": true })))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct UpgradeOptions {
+    allow_downgrade: bool,
+    wipe_settings: bool,
+}
+
+async fn check_upgrade(
+    State(app): State<AppState>,
+    ApiJson(opts): ApiJson<UpgradeOptions>,
+) -> ApiResult {
+    let info = app
+        .backend
+        .upgrade_check(&app.upload_dir, opts.allow_downgrade)
+        .await?;
+    Ok(ok(info))
+}
+
+async fn start_upgrade(
+    State(app): State<AppState>,
+    Extension(session): Extension<SessionView>,
+    ApiJson(opts): ApiJson<UpgradeOptions>,
+) -> ApiResult {
+    detached(async move {
+        tracing::info!(
+            actor = %session.user.name,
+            allow_downgrade = opts.allow_downgrade,
+            wipe_settings = opts.wipe_settings,
+            "firmware upgrade requested"
+        );
+        app.backend
+            .upgrade(&app.upload_dir, opts.allow_downgrade, opts.wipe_settings)
+            .await?;
+        Ok(ok(json!({ "upgrading": true })))
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,6 +807,7 @@ mod tests {
             ui_enabled: false,
             ui_dir: None,
             audit_log_path: dir.path().join("audit.log"),
+            upload_dir: dir.path().join("upload"),
         };
         let (_, app) = crate::server::build(&cfg);
         let ip = ClientIp("192.168.8.9".parse().unwrap());

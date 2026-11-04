@@ -1,4 +1,4 @@
-/* pages/system.js - #/system: settings (config draft), users, my password, services, backup/restore, reboot, firmware.
+/* pages/system.js - #/system: settings (config draft), users, my password, services, backup/restore, firmware upgrade, reboot, firmware info.
  *
  * Only the first card edits the config draft (applied with the global bar). Everything else
  * calls its own endpoint immediately, after a confirmation where it is destructive.
@@ -201,11 +201,106 @@ export default async function system(root, signal) {
     if (!ok) return;
     try { await withBusy(button, () => api.post('/system/reboot')); } catch (e) { return handleError(e); }
     root.replaceChildren(pageHeader('Restarting...'), banner('info', 'The router is restarting. This page reconnects automatically.'));
-    await sleep(8000);
+    await reconnect(8000);
+  }
+
+  /** After a restart: wait `firstMs`, then poll until the router answers and reload the page. */
+  async function reconnect(firstMs) {
+    await sleep(firstMs);
     while (!signal.aborted) {
       try { await api.get('/system/status'); location.reload(); return; } catch { await sleep(4000); }
     }
   }
+
+  /* ----- firmware upgrade (admins) -----
+   * Choose the release files -> clear old uploads, PUT each one (progress per file) -> POST check
+   * -> inline confirmation (reset settings, allow downgrade when older) -> POST /system/upgrade. */
+  const IMAGE_NAME = /^ferritewrt-.+-sysupgrade\.bin$/;
+  const RELEASE_HINT = 'SHA256SUMS, SHA256SUMS.sig and ferritewrt-<board>-v<version>-sysupgrade.bin';
+  const fwPicker = h('input', { type: 'file', multiple: true, id: 'fw-files', 'aria-label': 'Firmware release files' });
+  const fwCheckBtn = btn('Upload and check', () => uploadAndCheck(), { icon: 'upload', variant: 'primary' });
+  const fwBox = h('div', { 'aria-live': 'polite' });
+
+  /** The three release files out of the picker's selection, or an error message. */
+  function releaseFiles(list) {
+    const files = [...list];
+    const sums = files.find((f) => f.name === 'SHA256SUMS');
+    const sig = files.find((f) => f.name === 'SHA256SUMS.sig');
+    const images = files.filter((f) => IMAGE_NAME.test(f.name));
+    if (!sums || !sig || images.length !== 1 || files.length !== 3) return { error: `Choose exactly the three release files: ${RELEASE_HINT}.` };
+    return { files: [sums, sig, images[0]] };
+  }
+
+  async function uploadAndCheck() {
+    const { files, error } = releaseFiles(fwPicker.files);
+    if (error) return fwBox.replaceChildren(banner('error', error));
+    await withBusy(fwCheckBtn, async () => {
+      const rows = files.map((f) => ({ f, bar: h('progress', { max: f.size || 1, value: 0 }), note: h('span', { class: 'muted' }, ' waiting') }));
+      fwBox.replaceChildren(kv(rows.map((r) => [r.f.name, [r.bar, r.note]])));
+      try {
+        await api.del('/system/upgrade/files');
+        for (const r of rows) {
+          r.note.textContent = ' uploading';
+          await api.putFile(`/system/upgrade/files/${encodeURIComponent(r.f.name)}`, r.f, (sent, total) => {
+            r.bar.max = total || 1;
+            r.bar.value = sent;
+            r.note.textContent = ` ${Math.floor((100 * sent) / (total || 1))}%`;
+          });
+          r.bar.value = r.bar.max;
+          r.note.textContent = ' uploaded';
+        }
+        fwBox.append(h('p', { class: 'muted' }, 'Checking the signature and the image...'));
+        const info = await api.post('/system/upgrade/check', { allow_downgrade: true });
+        fwBox.replaceChildren(confirmUpgrade(info));
+      } catch (e) {
+        fwBox.append(banner('error', e.message));
+      }
+    });
+  }
+
+  function confirmUpgrade(info) {
+    const wipe = h('input', { type: 'checkbox', id: 'fw-wipe' });
+    const allow = info.downgrade ? h('input', { type: 'checkbox', id: 'fw-downgrade' }) : null;
+    const problem = h('div');
+    const installBtn = btn('Install firmware', () => install(), { variant: 'danger', icon: 'upload', disabled: !!allow });
+    allow?.addEventListener('change', () => { installBtn.disabled = !allow.checked; });
+    const cancelBtn = btn('Cancel', async () => {
+      fwBox.replaceChildren();
+      fwPicker.value = '';
+      try { await api.del('/system/upgrade/files'); } catch (e) { handleError(e); }
+    }, { variant: 'ghost' });
+
+    async function install() {
+      problem.replaceChildren();
+      try {
+        await withBusy(installBtn, () => api.post('/system/upgrade', { allow_downgrade: !!allow?.checked, wipe_settings: wipe.checked }));
+      } catch (e) { return problem.replaceChildren(banner('error', e.message)); }
+      root.replaceChildren(pageHeader('Installing firmware...'), banner('warn', [
+        `The router is writing FerriteWRT ${info.version} and will then restart. This takes a few minutes. Do not unplug the power.`,
+        wipe.checked
+          ? ' All settings are being reset: afterwards, connect to the router\'s factory address and set it up again.'
+          : ' This page reconnects automatically when the router is back.',
+      ].join('')));
+      if (!wipe.checked) await reconnect(60000);
+    }
+
+    return h('div', { class: 'subcard' }, [
+      h('p', h('strong', `FerriteWRT ${info.version} for ${info.board} (running ${info.running}), signature verified.`)),
+      h('p', { class: 'muted' }, info.image),
+      allow && banner('warn', `${info.version} is older than the running ${info.running}. Downgrading can lose settings that the older version does not understand.`),
+      allow && h('p', h('label', { class: 'chk' }, [allow, 'Allow downgrade'])),
+      h('p', h('label', { class: 'chk' }, [wipe, 'Reset all settings (factory defaults, including users and Wi-Fi)'])),
+      h('p', 'Installing stops the router\'s services, writes the new firmware and restarts. Internet and Wi-Fi are down for a few minutes.'),
+      problem,
+      h('div', { class: 'actions' }, [cancelBtn, installBtn]),
+    ]);
+  }
+
+  const firmwareCard = state.session?.role === 'admin' && card('Firmware upgrade', h('div', { 'data-local': true }, [
+    h('p', { class: 'muted' }, `Choose the three files of a FerriteWRT release at once: ${RELEASE_HINT}. They are checked before anything is installed.`),
+    h('div', { class: 'row-actions' }, [fwPicker, fwCheckBtn]),
+    fwBox,
+  ]));
 
   /* ----- firmware info ----- */
   const infoBox = dynamic(() => h('p', { class: 'muted' }, 'Loading...'));
@@ -229,6 +324,7 @@ export default async function system(root, signal) {
       h('p', h('a', { class: 'btn', href: '/api/v1/system/backup', download: 'router-backup.toml' }, 'Download backup')),
       h('div', { class: 'row-actions' }, [file, restoreBtn]),
     ]),
+    ...(firmwareCard ? [firmwareCard] : []),
     card('Restart', [h('p', { class: 'muted' }, 'Restart the router, for example after a firmware problem.'), btn('Restart router', (e) => reboot(e.currentTarget), { icon: 'power', variant: 'danger' })]),
   );
   loadUsers();

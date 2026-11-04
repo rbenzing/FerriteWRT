@@ -15,8 +15,11 @@ Current state and the next hardware step are in [STATUS.md](STATUS.md).
   DHCP + NAT + both radios work, UI reachable at https://192.168.8.1.
 
 ## Phase 2: shrink the C surface, finish upgrade path
-- `owr-upgrade`: verify signed sysupgrade images (ed25519), write kernel/rootfs eMMC
-  partitions, preserve `/etc/ferritewrt`, A/B boot counter via U-Boot env.
+- Done (untested on hardware): `owr-upgrade` verifies the signed release bundle, init
+  writes kernel and rootfs with read-back and keeps `/etc/ferritewrt`; `owr upgrade` and
+  the web UI start it. Single slot: the reference board has one kernel and one rootfs
+  partition, so recovery from a failed write is the bootloader's. A/B with a U-Boot boot
+  counter needs a repartitioned layout and is not planned for the Flint 2.
 - Replace odhcpd with Rust RA/DHCPv6 (in `owr-net`), which also makes IPv6 on the LAN work;
   replace dnsmasq with a Rust DHCPv4 server + forwarding resolver (`owr-dns`, hickory-based).
 - Render PPPoE WAN (modelled in the config, not rendered).

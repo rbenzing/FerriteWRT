@@ -6,6 +6,7 @@
 
 #![cfg(target_os = "linux")]
 
+use std::fmt::Write as _;
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -87,7 +88,10 @@ fn reply_to(line: &str) -> String {
         }
         ["restart" | "reload", name] if KNOWN_SERVICES.contains(name) => "{\"ok\":true}\n".into(),
         ["restart" | "reload", _] => "{\"ok\":false,\"error\":\"unknown service\"}\n".into(),
-        ["reboot"] => "{\"ok\":true}\n".into(),
+        ["upgrade", dir, ..] if dir.ends_with("/refused") => {
+            "{\"ok\":false,\"error\":\"failsafe mode: upgrades are disabled\"}\n".into()
+        }
+        ["reboot"] | ["upgrade", ..] => "{\"ok\":true}\n".into(),
         _ => "{\"ok\":false,\"error\":\"unsupported\"}\n".into(),
     }
 }
@@ -234,6 +238,7 @@ fn fixture_with(mode: Mode, init: bool) -> Fixture {
     let mut cfg = RealConfig::with_run_dir(&run_dir);
     cfg.board_path = dir.path().join("board.toml");
     cfg.config_path = dir.path().join("etc").join("config.toml");
+    cfg.release_key = dir.path().join("release.pub");
     std::fs::write(&cfg.board_path, owr_board::GL_MT6000_TOML).unwrap();
     let board = Board::load(&cfg.board_path).unwrap();
 
@@ -905,4 +910,164 @@ async fn startup_writes_defaults_on_first_boot() {
         )
         .await
         .unwrap();
+}
+
+// ------------------------------------------------------------------- upgrade
+
+const BOARD_ID: &str = "glinet_gl-mt6000";
+
+fn image_name(version: &str) -> String {
+    format!("ferritewrt-{BOARD_ID}-v{version}-sysupgrade.bin")
+}
+
+/// One GNU tar header block.
+fn tar_header(name: &str, size: usize, typeflag: u8) -> [u8; 512] {
+    let mut h = [0u8; 512];
+    h[..name.len()].copy_from_slice(name.as_bytes());
+    h[100..108].copy_from_slice(b"0000644\0");
+    h[124..136].copy_from_slice(format!("{size:011o}\0").as_bytes());
+    h[156] = typeflag;
+    h[257..265].copy_from_slice(b"ustar  \0");
+    h[148..156].copy_from_slice(b"        ");
+    let sum: u32 = h.iter().map(|&b| u32::from(b)).sum();
+    h[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+    h
+}
+
+/// A sysupgrade image as `OpenWrt` builds it: `sysupgrade-<board>/` with CONTROL, kernel, root.
+fn sysupgrade_image(board: &str) -> Vec<u8> {
+    let dir = format!("sysupgrade-{board}/");
+    let control = format!("BOARD={board}\n");
+    let mut out = tar_header(&dir, 0, b'5').to_vec();
+    for (name, data) in [
+        ("CONTROL", control.as_bytes()),
+        ("kernel", b"kernel-fit".as_slice()),
+        ("root", b"squashfs-root".as_slice()),
+    ] {
+        out.extend_from_slice(&tar_header(&format!("{dir}{name}"), data.len(), b'0'));
+        out.extend_from_slice(data);
+        out.resize(out.len().next_multiple_of(512), 0);
+    }
+    out.extend_from_slice(&[0u8; 1024]);
+    out
+}
+
+/// A release in `dir` (created) for our board at `version`, signed by `key`.
+fn signed_release(dir: &Path, version: &str, key: &ed25519_dalek::SigningKey) {
+    use ed25519_dalek::Signer as _;
+    use owr_upgrade::release::{SIG_FILE, SUMS_FILE, hash_file, signature_text};
+
+    std::fs::create_dir_all(dir).unwrap();
+    let name = image_name(version);
+    let path = dir.join(&name);
+    std::fs::write(&path, sysupgrade_image(BOARD_ID)).unwrap();
+    let sums = format!("{}  {name}\n", hash_file(&path).unwrap().0);
+    std::fs::write(dir.join(SUMS_FILE), &sums).unwrap();
+    let sig = signature_text(
+        &key.verifying_key().to_bytes(),
+        &key.sign(sums.as_bytes()).to_bytes(),
+    );
+    std::fs::write(dir.join(SIG_FILE), sig).unwrap();
+}
+
+fn release_key() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[7u8; 32])
+}
+
+/// Install `key`'s public half as the router's release key.
+fn trust(f: &Fixture, key: &ed25519_dalek::SigningKey) {
+    let mut hex = String::new();
+    for b in key.verifying_key().to_bytes() {
+        write!(hex, "{b:02x}").unwrap();
+    }
+    std::fs::write(&f.cfg.release_key, format!("{hex}\n")).unwrap();
+}
+
+fn refusal(err: BackendError) -> String {
+    match err {
+        BackendError::Refused(msg) => msg,
+        other => unreachable!("expected Refused, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn upgrade_check_verifies_a_signed_bundle() {
+    let f = fixture_with(Mode::Ok(ApplyOutcome::default()), false);
+    let key = release_key();
+    trust(&f, &key);
+    let dir = f.path("upload");
+    signed_release(&dir, "9.0.0", &key);
+    let info = f.backend.upgrade_check(&dir, false).await.unwrap();
+    assert_eq!(info.image, image_name("9.0.0"));
+    assert_eq!(info.version, "9.0.0");
+    assert_eq!(info.board, BOARD_ID);
+    assert_eq!(info.running, env!("CARGO_PKG_VERSION"));
+    assert!(!info.downgrade);
+
+    // an older release needs the explicit downgrade, then reports it
+    let old = f.path("old");
+    signed_release(&old, "0.0.1", &key);
+    let msg = refusal(f.backend.upgrade_check(&old, false).await.unwrap_err());
+    assert!(msg.contains("older"), "{msg}");
+    assert!(f.backend.upgrade_check(&old, true).await.unwrap().downgrade);
+
+    // signed by someone else
+    let other = f.path("other");
+    signed_release(
+        &other,
+        "9.0.0",
+        &ed25519_dalek::SigningKey::from_bytes(&[8u8; 32]),
+    );
+    let msg = refusal(f.backend.upgrade_check(&other, false).await.unwrap_err());
+    assert!(msg.starts_with("SHA256SUMS.sig"), "{msg}");
+
+    // nothing uploaded
+    let msg = refusal(
+        f.backend
+            .upgrade_check(&f.path("empty"), false)
+            .await
+            .unwrap_err(),
+    );
+    assert!(msg.starts_with("SHA256SUMS"), "{msg}");
+}
+
+#[tokio::test]
+async fn upgrade_check_without_a_release_key_is_an_internal_error() {
+    let f = fixture_with(Mode::Ok(ApplyOutcome::default()), false);
+    let dir = f.path("upload");
+    signed_release(&dir, "9.0.0", &release_key());
+    assert!(matches!(
+        f.backend.upgrade_check(&dir, false).await,
+        Err(BackendError::Internal(_))
+    ));
+    std::fs::write(&f.cfg.release_key, "not a key").unwrap();
+    assert!(matches!(
+        f.backend.upgrade_check(&dir, false).await,
+        Err(BackendError::Internal(_))
+    ));
+}
+
+#[tokio::test]
+async fn upgrade_is_handed_to_init_and_its_refusal_reaches_the_user() {
+    let f = fixture();
+    let dir = f.path("upload");
+    f.backend.upgrade(&dir, true, false).await.unwrap();
+    f.backend.upgrade(&dir, false, true).await.unwrap();
+    let refused = f.path("refused");
+    let msg = refusal(f.backend.upgrade(&refused, false, false).await.unwrap_err());
+    assert_eq!(msg, "failsafe mode: upgrades are disabled");
+    assert_eq!(
+        f.requests(),
+        [
+            format!("upgrade {} downgrade", dir.display()),
+            format!("upgrade {} wipe", dir.display()),
+            format!("upgrade {}", refused.display()),
+        ]
+    );
+    // without init the request cannot be delivered
+    let down = fixture_with(Mode::Ok(ApplyOutcome::default()), false);
+    assert!(matches!(
+        down.backend.upgrade(&dir, false, false).await,
+        Err(BackendError::Unavailable(_))
+    ));
 }

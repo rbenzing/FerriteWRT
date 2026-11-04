@@ -12,7 +12,7 @@ use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use owr_api::SystemBackend;
 use owr_api::dto::{Role, UserInfo};
-use owr_api::mock::MockBackend;
+use owr_api::mock::{MockBackend, MockUpgrade};
 use owr_api::password::hash_password;
 use owr_api::{ServerConfig, TlsConfig, router};
 use serde_json::{Value, json};
@@ -78,6 +78,7 @@ fn harness_opts(users: &[(&str, Role)], tls: bool) -> Harness {
         ui_enabled: true,
         ui_dir: Some(ui),
         audit_log_path: dir.path().join("audit.log"),
+        upload_dir: dir.path().join("upload"),
     };
     Harness {
         app: router(&cfg),
@@ -1130,6 +1131,255 @@ async fn oversized_body_is_413() {
     assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+// ---------------------------------------------------------------- firmware upgrade
+
+const IMAGE: &str = "ferritewrt-glinet_gl-mt6000-v9.0.0-sysupgrade.bin";
+const OLD_IMAGE: &str = "ferritewrt-glinet_gl-mt6000-v0.0.1-sysupgrade.bin";
+
+fn upload_req(name: &str, body: Vec<u8>, s: Option<&Session>) -> Request<Body> {
+    let mut r = req(
+        Method::PUT,
+        &format!("/api/v1/system/upgrade/files/{name}"),
+        None,
+        s,
+    );
+    *r.body_mut() = Body::from(body);
+    r.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/octet-stream".parse().unwrap(),
+    );
+    r
+}
+
+async fn upload(h: &Harness, name: &str, body: &[u8], s: &Session) -> Resp {
+    send(&h.app, upload_req(name, body.to_vec(), Some(s))).await
+}
+
+async fn upload_bundle(h: &Harness, image: &str, s: &Session) {
+    for (name, body) in [
+        ("SHA256SUMS", &b"sums\n"[..]),
+        ("SHA256SUMS.sig", b"sig\n"),
+        (image, b"image bytes"),
+    ] {
+        let r = upload(h, name, body, s).await;
+        assert_eq!(r.status, StatusCode::OK, "{name}: {}", r.text());
+    }
+}
+
+impl Harness {
+    fn uploads(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.dir.path().join("upload"))
+            .map(|d| {
+                d.map(|e| e.unwrap().file_name().into_string().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upgrade_routes_are_admin_only_and_need_csrf() {
+    let h = harness();
+    let v = login(&h.app, "viewer").await;
+    let a = login(&h.app, "admin").await;
+    let r = upload(&h, "SHA256SUMS", b"x", &v).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    for (method, uri) in [
+        (Method::DELETE, "/api/v1/system/upgrade/files"),
+        (Method::POST, "/api/v1/system/upgrade/check"),
+        (Method::POST, "/api/v1/system/upgrade"),
+    ] {
+        let r = call(&h.app, method.clone(), uri, Some(json!({})), &v).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{method} {uri}");
+        let r = send(&h.app, req(method.clone(), uri, Some(json!({})), None)).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+    let r = send(&h.app, upload_req("SHA256SUMS", b"x".to_vec(), None)).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+
+    // an admin session without the CSRF token cannot upload or start an upgrade
+    let no_csrf = Session {
+        cookie: a.cookie.clone(),
+        csrf: "wrong".into(),
+    };
+    let r = upload(&h, "SHA256SUMS", b"x", &no_csrf).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.error_code(), "csrf_invalid");
+    upload_bundle(&h, IMAGE, &a).await;
+    let r = call(
+        &h.app,
+        Method::POST,
+        "/api/v1/system/upgrade",
+        Some(json!({})),
+        &no_csrf,
+    )
+    .await;
+    assert_eq!(r.error_code(), "csrf_invalid");
+    assert_eq!(h.backend.upgrades(), Vec::<MockUpgrade>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upload_accepts_only_release_file_names() {
+    let h = harness();
+    let a = login(&h.app, "admin").await;
+    for bad in [
+        "config.toml",
+        "sha256sums",
+        ".upload-0",
+        "ferritewrt-x-v1.0.0-factory.bin",
+        "ferritewrt-a%2Fb-sysupgrade.bin",
+        "..%2Fferritewrt-x-sysupgrade.bin",
+    ] {
+        let r = upload(&h, bad, b"x", &a).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad}: {}", r.text());
+    }
+    assert_eq!(h.uploads(), Vec::<String>::new());
+    let r = upload(&h, IMAGE, b"0123456789", &a).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["data"], json!({"name": IMAGE, "size": 10}));
+    let r = upload(&h, "SHA256SUMS", b"", &a).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "empty files are refused");
+    assert_eq!(h.uploads(), [IMAGE]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn oversized_upload_is_413_and_leaves_nothing_behind() {
+    let h = harness();
+    let a = login(&h.app, "admin").await;
+    let r = upload(&h, "SHA256SUMS.sig", b"good", &a).await;
+    assert_eq!(r.status, StatusCode::OK);
+    // streamed past the 4 KiB limit of the signature file (no Content-Length)
+    let r = upload(&h, "SHA256SUMS.sig", &[b'x'; 4097], &a).await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", r.text());
+    assert_eq!(r.error_code(), "payload_too_large");
+    // announced as too large: refused before anything is read
+    let mut big = upload_req("SHA256SUMS", vec![b'x'; 10], Some(&a));
+    big.headers_mut()
+        .insert(header::CONTENT_LENGTH, "65537".parse().unwrap());
+    let r = send(&h.app, big).await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE);
+    // 300 KiB is fine for an image (larger than any other route allows)
+    let r = upload(&h, IMAGE, &vec![0u8; 300 * 1024], &a).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    // the earlier signature is untouched, no partial file is left
+    assert_eq!(h.uploads(), ["SHA256SUMS.sig", IMAGE]);
+    assert_eq!(
+        std::fs::read(h.dir.path().join("upload").join("SHA256SUMS.sig")).unwrap(),
+        b"good"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upload_check_and_upgrade_on_the_mock() {
+    let h = harness();
+    let a = login(&h.app, "admin").await;
+    upload_bundle(&h, IMAGE, &a).await;
+    let r = call(
+        &h.app,
+        Method::POST,
+        "/api/v1/system/upgrade/check",
+        Some(json!({})),
+        &a,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let info = &r.json()["data"];
+    assert_eq!(info["image"], IMAGE);
+    assert_eq!(info["version"], "9.0.0");
+    assert_eq!(info["board"], "glinet_gl-mt6000");
+    assert_eq!(info["running"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(info["downgrade"], false);
+
+    let r = call(
+        &h.app,
+        Method::POST,
+        "/api/v1/system/upgrade",
+        Some(json!({"wipe_settings": true})),
+        &a,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["data"], json!({"upgrading": true}));
+    let done = h.backend.upgrades();
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].dir, h.dir.path().join("upload"));
+    assert!(done[0].wipe_settings && !done[0].allow_downgrade);
+    let audited = h
+        .audit_lines()
+        .into_iter()
+        .find(|l| l["path"] == "/api/v1/system/upgrade")
+        .unwrap();
+    assert_eq!(audited["actor"], "admin");
+    assert_eq!(audited["outcome"], "ok");
+
+    let r = call(
+        &h.app,
+        Method::DELETE,
+        "/api/v1/system/upgrade/files",
+        None,
+        &a,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(h.uploads(), Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_checks_are_4xx_with_the_reason() {
+    let h = harness();
+    let a = login(&h.app, "admin").await;
+    let check = |allow: bool| {
+        call(
+            &h.app,
+            Method::POST,
+            "/api/v1/system/upgrade/check",
+            Some(json!({"allow_downgrade": allow})),
+            &a,
+        )
+    };
+    let upgrade = |allow: bool| {
+        call(
+            &h.app,
+            Method::POST,
+            "/api/v1/system/upgrade",
+            Some(json!({"allow_downgrade": allow})),
+            &a,
+        )
+    };
+    let r = check(false).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(r.error_code(), "bad_request");
+    assert!(
+        r.json()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("SHA256SUMS"),
+        "{}",
+        r.text()
+    );
+    assert_eq!(upgrade(false).await.status, StatusCode::BAD_REQUEST);
+
+    upload_bundle(&h, OLD_IMAGE, &a).await;
+    let r = check(false).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(r.text().contains("older"), "{}", r.text());
+    let r = upgrade(false).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(h.backend.upgrades(), Vec::<MockUpgrade>::new());
+
+    let r = check(true).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["data"]["downgrade"], true);
+    assert_eq!(upgrade(true).await.status, StatusCode::OK);
+    assert!(h.backend.upgrades()[0].allow_downgrade);
+
+    // a new image replaces the old one: one bundle at a time
+    upload_bundle(&h, IMAGE, &a).await;
+    assert_eq!(h.uploads(), ["SHA256SUMS", "SHA256SUMS.sig", IMAGE]);
+}
+
 // ---------------------------------------------------------------- audit
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1283,6 +1533,7 @@ async fn ui_can_be_disabled() {
         ui_enabled: false,
         ui_dir: None,
         audit_log_path: dir.path().join("a.log"),
+        upload_dir: dir.path().join("upload"),
     };
     let app = router(&cfg);
     assert_eq!(get(&app, "/", None).await.status, StatusCode::NOT_FOUND);
@@ -1303,6 +1554,7 @@ async fn embedded_ui_serves_something_at_root() {
         ui_enabled: true,
         ui_dir: None,
         audit_log_path: dir.path().join("a.log"),
+        upload_dir: dir.path().join("upload"),
     };
     let app = router(&cfg);
     let r = get(&app, "/", None).await;
@@ -1570,6 +1822,21 @@ impl SystemBackend for GatedBackend {
     fn restore<'a>(&'a self, bytes: Vec<u8>, actor: &'a str) -> Bf<'a, owr_api::dto::ApplyReport> {
         self.inner.restore(bytes, actor)
     }
+    fn upgrade_check<'a>(
+        &'a self,
+        dir: &'a std::path::Path,
+        allow_downgrade: bool,
+    ) -> Bf<'a, owr_api::dto::UpgradeInfo> {
+        self.inner.upgrade_check(dir, allow_downgrade)
+    }
+    fn upgrade<'a>(
+        &'a self,
+        dir: &'a std::path::Path,
+        allow_downgrade: bool,
+        wipe_settings: bool,
+    ) -> Bf<'a, ()> {
+        self.inner.upgrade(dir, allow_downgrade, wipe_settings)
+    }
 }
 
 async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
@@ -1604,6 +1871,7 @@ async fn backend_call_survives_a_cancelled_request_and_is_audited_as_aborted() {
         ui_enabled: false,
         ui_dir: None,
         audit_log_path: audit_path.clone(),
+        upload_dir: dir.path().join("upload"),
     };
     let app = router(&cfg);
     let a = login(&app, "admin").await;

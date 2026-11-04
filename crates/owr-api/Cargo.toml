@@ -22,6 +22,7 @@ owr-config.workspace = true
 owr-common.workspace = true
 owr-apply.workspace = true
 owr-init.workspace = true
+owr-upgrade.workspace = true
 owr-net.workspace = true
 owr-wifi.workspace = true
 serde.workspace = true
@@ -56,6 +57,7 @@ owr-fw.workspace = true
 rtnetlink.workspace = true
 
 [dev-dependencies]
+ed25519-dalek.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

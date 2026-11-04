@@ -14,12 +14,10 @@ use crate::version::Version;
 /// Upper bounds for the two small files; a real `SHA256SUMS` is well under 1 KiB.
 const MAX_SUMS: u64 = 64 * 1024;
 const MAX_SIG: u64 = 4 * 1024;
-/// Upper bound for a staged image. The reference board's image is about 30 MiB; staging
-/// happens in RAM (tmpfs), so this also bounds memory use.
-pub const MAX_IMAGE: u64 = 256 * 1024 * 1024;
-/// Most sysupgrade images a staged bundle may contain (a release has one per board).
-const MAX_IMAGES: usize = 4;
-const IMAGE_SUFFIX: &str = "-sysupgrade.bin";
+/// Upper bound for an image. The reference board's image is about 30 MiB. On the router the
+/// upload and init's staged copy both sit in RAM (tmpfs), so two of these must fit
+/// comfortably: 128 MiB keeps the worst case at a quarter of a 1 GiB router.
+pub const MAX_IMAGE: u64 = 128 * 1024 * 1024;
 
 fn copy_capped(src: &Path, dst: &Path, cap: u64) -> Result<(), BundleError> {
     let name = src
@@ -46,9 +44,10 @@ fn copy_capped(src: &Path, dst: &Path, cap: u64) -> Result<(), BundleError> {
 
 /// Copy a bundle from `src` (a directory the caller does not control) into a fresh `dst`
 /// that only the caller can write (mode 0700 on unix), so nothing can change the files
-/// between [`verify`] and the write. Copies `SHA256SUMS`, its signature and every
-/// `*-sysupgrade.bin` (at most a few, each at most [`MAX_IMAGE`] bytes); `dst` is replaced.
-pub fn stage(src: &Path, dst: &Path) -> Result<(), BundleError> {
+/// between [`verify`] and the write. Copies `SHA256SUMS`, its signature and the one
+/// sysupgrade image named for `board` (at most [`MAX_IMAGE`] bytes); images of other boards
+/// in `src` (a full multi-board release) are skipped. `dst` is replaced.
+pub fn stage(src: &Path, dst: &Path, board: &str) -> Result<(), BundleError> {
     let err = |msg: String| BundleError::Read {
         file: dst.display().to_string(),
         msg,
@@ -74,19 +73,25 @@ pub fn stage(src: &Path, dst: &Path) -> Result<(), BundleError> {
         file: src.display().to_string(),
         msg: e.to_string(),
     })?;
-    let mut images = 0usize;
+    let mut staged = false;
     for entry in listing.filter_map(Result::ok) {
         let name = entry.file_name();
-        let Some(name) = name.to_str().filter(|n| n.ends_with(IMAGE_SUFFIX)) else {
+        let Some(name) = name.to_str().filter(|n| image_version(n, board).is_some()) else {
             continue;
         };
-        images = images.saturating_add(1);
-        if images > MAX_IMAGES {
-            return Err(BundleError::Sums("too many sysupgrade images".into()));
+        if std::mem::replace(&mut staged, true) {
+            return Err(BundleError::Sums(format!(
+                "more than one sysupgrade image for {board} in {}",
+                src.display()
+            )));
         }
         copy_capped(&entry.path(), &dst.join(name), MAX_IMAGE)?;
     }
-    Ok(())
+    if staged {
+        Ok(())
+    } else {
+        Err(BundleError::NoImage(board.to_owned()))
+    }
 }
 
 /// What the running router is.
@@ -387,12 +392,19 @@ pub(crate) mod tests {
     #[test]
     fn staged_copy_verifies_and_ignores_unrelated_files() {
         let src = tempfile::tempdir().unwrap();
-        release(src.path(), &[(NAME, &good_image()), ("notes.txt", b"x")]);
+        release(
+            src.path(),
+            &[
+                (NAME, &good_image()),
+                ("ferritewrt-other-v0.3.0-sysupgrade.bin", b"another board"),
+                ("notes.txt", b"x"),
+            ],
+        );
         let dst = tempfile::tempdir().unwrap();
         let staged = dst.path().join("upgrade");
         fs::create_dir(&staged).unwrap();
         fs::write(staged.join("leftover"), b"old").unwrap();
-        stage(src.path(), &staged).unwrap();
+        stage(src.path(), &staged, BOARD).unwrap();
         let mut names: Vec<String> = fs::read_dir(&staged)
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -418,7 +430,7 @@ pub(crate) mod tests {
         fs::write(src.path().join(NAME), good_image()).unwrap();
         let dst = tempfile::tempdir().unwrap();
         assert!(matches!(
-            stage(src.path(), &dst.path().join("u")),
+            stage(src.path(), &dst.path().join("u"), BOARD),
             Err(BundleError::Read { file, .. }) if file == SUMS_FILE
         ));
     }

@@ -79,7 +79,7 @@ pub(super) fn prepare(
         .ok_or("the running version is not MAJOR.MINOR.PATCH")?;
     let staged = staging_dir();
     let result = (|| {
-        bundle::stage(Path::new(&req.dir), &staged).map_err(|e| e.to_string())?;
+        bundle::stage(Path::new(&req.dir), &staged, &board.board.id).map_err(|e| e.to_string())?;
         let expect = bundle::Expect {
             board_id: &board.board.id,
             profile: &board.openwrt.profile,

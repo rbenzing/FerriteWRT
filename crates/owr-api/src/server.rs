@@ -11,7 +11,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{Method, StatusCode};
-use axum::middleware::{from_fn, from_fn_with_state};
+use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -20,7 +20,6 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tower::ServiceExt;
-use tower_http::timeout::TimeoutLayer;
 
 use crate::app::{AppState, Inner, rate_limit_key, unmap_ip};
 use crate::audit::AuditLog;
@@ -35,6 +34,12 @@ use crate::ui::UiSource;
 
 /// Per-request processing deadline.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Deadline for the firmware upgrade routes: uploading an image of up to
+/// `owr_upgrade::bundle::MAX_IMAGE` bytes over a slow link, hashing it, init staging it.
+/// Below `CONNECTION_LIFETIME`, which ends the request anyway.
+const UPGRADE_REQUEST_TIMEOUT: Duration = Duration::from_secs(240);
+/// Paths that get `UPGRADE_REQUEST_TIMEOUT`.
+const UPGRADE_PATH: &str = "/api/v1/system/upgrade";
 /// Time a client gets to complete the TLS handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Time a client gets to send complete request headers.
@@ -74,6 +79,10 @@ pub struct ServerConfig {
     /// Serve the UI from this directory instead of the embedded copy.
     pub ui_dir: Option<PathBuf>,
     pub audit_log_path: PathBuf,
+    /// Directory owned by the API for firmware upgrade uploads (created on demand, mode
+    /// 0700); production uses `<run_dir>/upgrade-upload`. Its path must be a plain absolute
+    /// path (init refuses anything else).
+    pub upload_dir: PathBuf,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -85,6 +94,7 @@ impl std::fmt::Debug for ServerConfig {
             .field("ui_enabled", &self.ui_enabled)
             .field("ui_dir", &self.ui_dir)
             .field("audit_log_path", &self.audit_log_path)
+            .field("upload_dir", &self.upload_dir)
             .finish_non_exhaustive()
     }
 }
@@ -110,6 +120,7 @@ pub(crate) fn build(cfg: &ServerConfig) -> (Router, AppState) {
         audit: AuditLog::new(cfg.audit_log_path.clone()),
         secure: cfg.tls.is_some(),
         ui,
+        upload_dir: cfg.upload_dir.clone(),
         admin_lock: tokio::sync::Mutex::new(()),
         login_gate: Semaphore::new(1),
     }));
@@ -117,16 +128,33 @@ pub(crate) fn build(cfg: &ServerConfig) -> (Router, AppState) {
         .nest("/api/v1", routes::api_router(&app))
         .fallback(fallback)
         .with_state(app.clone())
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            REQUEST_TIMEOUT,
-        ))
+        .layer(from_fn(deadline))
         .layer(from_fn(reject_cross_site))
         .layer(from_fn(json_errors))
         .layer(from_fn_with_state(app.clone(), audit))
         .layer(from_fn_with_state(app.clone(), security_headers))
         .layer(from_fn(trace));
     (router, app)
+}
+
+fn request_timeout(path: &str) -> Duration {
+    let upgrade = path
+        .strip_prefix(UPGRADE_PATH)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
+    if upgrade {
+        UPGRADE_REQUEST_TIMEOUT
+    } else {
+        REQUEST_TIMEOUT
+    }
+}
+
+/// End a request that takes longer than its deadline with 408. The dropped handler future
+/// cancels the request; work it handed to `detached` tasks still completes.
+async fn deadline(req: Request, next: Next) -> Response {
+    let limit = request_timeout(req.uri().path());
+    tokio::time::timeout(limit, next.run(req))
+        .await
+        .unwrap_or_else(|_| StatusCode::REQUEST_TIMEOUT.into_response())
 }
 
 /// The fully layered application router (API + UI) without any network listener.
@@ -342,6 +370,36 @@ mod tests {
     }
 
     #[test]
+    fn only_upgrade_routes_get_the_long_deadline() {
+        for path in [
+            "/api/v1/system/upgrade",
+            "/api/v1/system/upgrade/check",
+            "/api/v1/system/upgrade/files/SHA256SUMS",
+        ] {
+            assert_eq!(request_timeout(path), UPGRADE_REQUEST_TIMEOUT, "{path}");
+        }
+        for path in ["/api/v1/system/upgraded", "/api/v1/system/reboot", "/"] {
+            assert_eq!(request_timeout(path), REQUEST_TIMEOUT, "{path}");
+        }
+        assert!(UPGRADE_REQUEST_TIMEOUT < CONNECTION_LIFETIME);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_requests_end_with_408() {
+        let app = Router::new()
+            .route(
+                "/slow",
+                axum::routing::get(|| async {
+                    tokio::time::sleep(REQUEST_TIMEOUT.saturating_mul(2)).await;
+                }),
+            )
+            .layer(from_fn(deadline));
+        let req = Request::builder().uri("/slow").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::REQUEST_TIMEOUT);
+    }
+
+    #[test]
     fn ipv6_clients_share_their_prefix_budget() {
         let counter = Arc::new(ConnectionCounter::default());
         let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
@@ -361,6 +419,7 @@ mod tests {
             ui_enabled: false,
             ui_dir: None,
             audit_log_path: dir.path().join("audit.log"),
+            upload_dir: dir.path().join("upload"),
         };
         // A tiny pipe whose far end never reads: the response cannot be written out.
         let (mut client, server) = tokio::io::duplex(64);

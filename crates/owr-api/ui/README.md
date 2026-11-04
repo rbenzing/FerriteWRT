@@ -21,7 +21,7 @@ Static files the server must serve (correct MIME types, `icons.svg` as `image/sv
 | `styles.css` | one stylesheet; theme = custom properties on `:root`, dark/light via `prefers-color-scheme` |
 | `icons.svg` | icon sprite, used as `<use href="/icons.svg#i-NAME">` |
 | `js/app.js` | hash router, session bootstrap, nav, unsaved-changes bar (check / apply / discard) |
-| `js/api.js` | fetch wrapper: JSON, `X-CSRF-Token` on mutations, 401 -> login, `ApiError`, path normalisation |
+| `js/api.js` | fetch wrapper: JSON, `X-CSRF-Token` on mutations, 401 -> login, `ApiError`, path normalisation; `putFile()` raw upload with progress (XHR) |
 | `js/state.js` | store: session, board, config draft + dirty flag, `apply()` |
 | `js/ui.js` | `h()`/`svg()`, bound form controls + validation rules, toast, `<dialog>` confirm, `poll()`, tables, formatters, signal bars |
 | `js/data.js` | IANA zone subset, regulatory countries |
@@ -38,7 +38,7 @@ Static files the server must serve (correct MIME types, `icons.svg` as `image/sv
 | `#/wireless` | `wireless.js` | radio cards (channels/width limited by board), APs, live clients |
 | `#/firewall` | `firewall.js` | WAN policy, port forwards, rules, hardware offload, ruleset preview |
 | `#/dhcp` | `dhcp.js` | leases (+ "make static"), static leases, upstream DNS, local domain, rebind protection |
-| `#/system` | `system.js` | settings, users, my password, services, backup/restore, reboot, firmware info |
+| `#/system` | `system.js` | settings, users, my password, services, backup/restore, firmware upgrade (admins), reboot, firmware info |
 | `#/logs` | `logs.js` | live tail, level + source filters, pause, copy |
 | `#/about` | `about.js` | hardware sheet rendered from board JSON |
 
@@ -78,6 +78,14 @@ endpoints immediately (their containers are marked `data-local` so the global Ap
 - `GET /logs?since=N` returns entries with `seq > N`; `/system/status` may carry
   `tls_fingerprint` (or `tls.fingerprint`) which the system page shows.
 - Network interfaces are matched to board ports by `name` or the board's `netdev`.
+- Firmware upgrade (system page, admins only): the three release files are chosen together, uploaded one
+  by one with `PUT /system/upgrade/files/{name}` (raw `application/octet-stream`, after
+  `DELETE /system/upgrade/files`), then `POST /system/upgrade/check {allow_downgrade:true}` returns
+  `{image,version,board,running,downgrade}`; "Allow downgrade" is offered (and required) only when
+  `downgrade` is true. `POST /system/upgrade {allow_downgrade,wipe_settings}` answers `{upgrading:true}`
+  once init accepted; a bad bundle or init's refusal is a 400 whose `message` is shown as is. After
+  that the page polls `/system/status` (from 60 s on) and reloads; with "Reset all settings" it only
+  tells the user to reconnect to the factory address.
 
 ## Self-checks
 
