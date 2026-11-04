@@ -241,8 +241,7 @@ pub(crate) fn render(
         What::Fw => write!(out, "{}", owr_fw::render(&plans.fw)?)?,
         What::Dnsmasq if json => return text_only("dnsmasq"),
         What::Dnsmasq => write!(out, "{}", plans.dnsmasq_conf)?,
-        What::Odhcpd if json => return text_only("odhcpd"),
-        What::Odhcpd => write!(out, "{}", plans.odhcpd_conf)?,
+        What::Netd => writeln!(out, "{}", serde_json::to_string_pretty(&plans.netd)?)?,
         What::Wifi if json => {
             let radios = if reveal_secrets {
                 plans.radios

@@ -147,7 +147,7 @@ impl MockBackend {
             "dnsmasq",
             "hostapd-radio0",
             "hostapd-radio1",
-            "odhcpd",
+            "owr-netd",
             "owr-api",
         ]
         .iter()

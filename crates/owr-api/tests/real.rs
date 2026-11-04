@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 
 const PASSWORD: &str = "correct horse battery";
 const OTHER_PASSWORD: &str = "another long passphrase";
-const KNOWN_SERVICES: [&str; 3] = ["dnsmasq", "odhcpd", "hostapd-phy0"];
+const KNOWN_SERVICES: [&str; 3] = ["dnsmasq", "owr-netd", "hostapd-phy0"];
 
 /// Argon2 is slow in debug builds: hash each password once per test binary.
 fn hash(password: &'static str) -> String {
@@ -226,7 +226,7 @@ fn changed_outcome() -> ApplyOutcome {
         fw_changed: true,
         hostapd_changed: vec![("phy0".into(), true), ("phy1".into(), false)],
         dnsmasq_changed: true,
-        odhcpd_changed: false,
+        netd_changed: false,
         warnings: vec!["sysctl x not available, skipped".into()],
     }
 }
@@ -447,7 +447,7 @@ async fn services_and_actions() {
         .await
         .unwrap();
     f.backend
-        .service_action("odhcpd", ServiceAction::Reload)
+        .service_action("owr-netd", ServiceAction::Reload)
         .await
         .unwrap();
     assert!(matches!(
@@ -773,16 +773,16 @@ async fn a_failed_apply_is_an_internal_error_but_partial_changes_still_restart()
 
 #[tokio::test]
 async fn restart_problems_become_warnings() {
-    // init knows hostapd-phy0 and dnsmasq only; the outcome also asks for odhcpd + phy1
+    // init knows hostapd-phy0 and dnsmasq only; the outcome also asks for owr-netd + phy1
     let outcome = ApplyOutcome {
         hostapd_changed: vec![("phy1".into(), true)],
-        odhcpd_changed: true,
+        netd_changed: true,
         ..ApplyOutcome::default()
     };
     let f = fixture_with(Mode::Ok(outcome), true);
     let doc = edited_hostname(&f, "warn").await;
     let report = f.backend.save_config(doc, "tester").await.unwrap();
-    assert_eq!(f.requests(), ["restart hostapd-phy1", "restart odhcpd"]);
+    assert_eq!(f.requests(), ["restart hostapd-phy1", "restart owr-netd"]);
     assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
     assert!(report.warnings[0].contains("hostapd-phy1 is not supervised"));
 

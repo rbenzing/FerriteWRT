@@ -10,10 +10,9 @@
 //!
 //! [`apply_all`] is idempotent: the DHCP lease reported earlier by [`on_dhcp_lease`] is
 //! persisted under the run directory and merged back into the plan, so a second run keeps
-//! the lease's address and routes and changes nothing.
-//!
-//! `owr-init` must make `/etc/config/dhcp` resolve to `<run_dir>/dhcp` (bind mount or
-//! symlink) so that odhcpd finds the rendered configuration.
+//! the lease's address and routes and changes nothing. The DHCP client runs in the network
+//! daemon ([`crate::daemon`]), which reports its leases through [`on_dhcp_lease`] and
+//! [`on_dhcp_lost`].
 
 use std::collections::BTreeSet;
 use std::io;
@@ -29,7 +28,7 @@ use serde::Serialize;
 use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::files::{DaemonFiles, FilesError, write_daemon_files_partial};
-use crate::lease::{publish_lease_dns, save_lease, with_persisted_lease};
+use crate::lease::{forget_lease, publish_lease_dns, save_lease, with_persisted_lease};
 use crate::steps::{
     Step, apply_steps, critical_links, forwarding_off, is_critical, split_forwarding,
 };
@@ -75,7 +74,7 @@ pub struct ApplyOutcome {
     /// `(phy, changed)` per radio with a hostapd config.
     pub hostapd_changed: Vec<(String, bool)>,
     pub dnsmasq_changed: bool,
-    pub odhcpd_changed: bool,
+    pub netd_changed: bool,
     /// Non-fatal problems (hostname, absent sysctls, failed-but-tolerated actions).
     pub warnings: Vec<String>,
 }
@@ -113,6 +112,8 @@ pub enum ApplyError {
         #[source]
         source: io::Error,
     },
+    #[error("installing signal handlers: {0}")]
+    Signal(#[source] io::Error),
     #[error("the network plan has no DHCP client to attach the lease to")]
     NoDhcpClient,
     /// `source` stopped [`apply_all`] after `outcome` had been reached: the daemons whose
@@ -328,7 +329,7 @@ async fn execute(
                 });
                 out.hostapd_changed = files.hostapd_changed;
                 out.dnsmasq_changed = files.dnsmasq_changed;
-                out.odhcpd_changed = files.odhcpd_changed;
+                out.netd_changed = files.netd_changed;
                 result?;
             }
         }
@@ -338,7 +339,7 @@ async fn execute(
 
 /// The plans for `(board, cfg)`, with the persistent ULA prefix loaded (or created) when the
 /// config asks for ULA addressing.
-fn plans_for(board: &Board, cfg: &Config, paths: &Paths) -> Result<Plans, ApplyError> {
+pub(crate) fn plans_for(board: &Board, cfg: &Config, paths: &Paths) -> Result<Plans, ApplyError> {
     let ula_prefix = if cfg.network.lan.ipv6 == LanIpv6::Ula {
         let (prefix, _created) = ula::load_or_create(&paths.ula_file, ula::os_random)?;
         Some(prefix)
@@ -410,6 +411,32 @@ pub async fn on_dhcp_lease(
     Ok(LeaseOutcome {
         net_actions,
         resolv_changed,
+        warnings,
+    })
+}
+
+/// The DHCP client lost its lease (NAK or expiry): forget the persisted lease and converge
+/// the plan without it, which removes the lease's address and routes. `resolv.conf.auto`
+/// keeps the last servers; nothing reaches them without an address anyway.
+pub async fn on_dhcp_lost(
+    board: &Board,
+    cfg: &Config,
+    paths: &Paths,
+) -> Result<LeaseOutcome, ApplyError> {
+    let plans = plans_for(board, cfg, paths)?;
+    let spec = plans
+        .net
+        .dhcp_clients
+        .first()
+        .ok_or(ApplyError::NoDhcpClient)?;
+    forget_lease(&paths.run_dir, &spec.link)?;
+    let (net, _) = split_forwarding(&plans.net);
+    let (net_actions, warnings) = converge_net(&net, &critical_links(&plans))
+        .instrument(info_span!("network_lease_lost"))
+        .await?;
+    Ok(LeaseOutcome {
+        net_actions,
+        resolv_changed: false,
         warnings,
     })
 }

@@ -6,6 +6,8 @@
 mod apply;
 pub mod dhcp;
 mod observe;
+pub mod ra;
+pub mod sysfs;
 
 use std::time::Duration;
 

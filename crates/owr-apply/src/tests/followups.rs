@@ -118,6 +118,60 @@ mod ula_mapping {
     }
 
     #[test]
+    fn netd_advertises_the_ula_subnet_of_every_bridge_with_the_router_as_dns() {
+        let mut cfg = with_guest(true);
+        with_ula(&mut cfg);
+        let inputs = Inputs {
+            ula_prefix: Some(prefix()),
+            ..Inputs::default()
+        };
+        let p = build_plans_with(&board(), &cfg, &inputs).unwrap();
+        let ra: Vec<(&str, String, Vec<String>)> = p
+            .netd
+            .ra
+            .iter()
+            .map(|s| {
+                (
+                    s.link.as_str(),
+                    s.prefix.to_string(),
+                    s.dns.iter().map(ToString::to_string).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ra,
+            [
+                (
+                    "br-lan",
+                    "fd12:3456:789a::/64".to_owned(),
+                    vec!["fd12:3456:789a::1".to_owned()]
+                ),
+                (
+                    "br-guest",
+                    "fd12:3456:789a:14::/64".to_owned(),
+                    vec!["fd12:3456:789a:14::1".to_owned()]
+                ),
+            ]
+        );
+        assert_eq!(p.netd.dhcp.as_ref(), p.net.dhcp_clients.first());
+    }
+
+    #[test]
+    fn netd_advertises_nothing_without_ula_and_runs_no_client_on_a_static_wan() {
+        let p = plans(&with_guest(true));
+        assert_eq!(p.netd.ra, Vec::new());
+        assert_eq!(p.netd.dhcp.as_ref().map(|d| d.link.as_str()), Some("eth1"));
+
+        let mut cfg = defaults();
+        cfg.network.wan.proto = c::WanProto::Static {
+            ipv4: net("203.0.113.2/24"),
+            gateway: Ipv4Addr::new(203, 0, 113, 1),
+            dns: Vec::new(),
+        };
+        assert_eq!(plans(&cfg).netd, crate::NetdPlan::default());
+    }
+
+    #[test]
     fn build_plans_is_build_plans_with_default_inputs() {
         let cfg = with_guest(true);
         assert_eq!(
@@ -189,7 +243,6 @@ mod dnsmasq_follow_ups {
         ] {
             assert!(p.dnsmasq_conf.lines().any(|l| l == line), "{line}");
         }
-        assert!(p.odhcpd_conf.contains("/tmp/owr-run/odhcpd.leases"));
     }
 
     #[test]
@@ -421,8 +474,8 @@ mod lease_persistence {
     use super::*;
     use crate::files::{RESOLV_AUTO, write_daemon_files, write_resolv};
     use crate::lease::{
-        is_expired, lease_path, load_valid_lease, publish_lease_dns, save_lease, usable_dns,
-        with_persisted_lease,
+        forget_lease, is_expired, lease_path, load_valid_lease, publish_lease_dns, save_lease,
+        usable_dns, with_persisted_lease,
     };
 
     fn lease(obtained_at: SystemTime, secs: u32, dns: Vec<Ipv4Addr>) -> Lease {
@@ -494,6 +547,19 @@ mod lease_persistence {
         let l = lease(at(0), 60, Vec::new());
         assert!(save_lease(dir.path(), "../evil", &l).is_err());
         assert_eq!(load_valid_lease(dir.path(), "../evil", at(0)), None);
+        assert!(forget_lease(dir.path(), "../evil").is_err());
+    }
+
+    #[test]
+    fn a_forgotten_lease_is_no_longer_merged() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = lease(at(1_000), 600, Vec::new());
+        save_lease(dir.path(), "eth1", &l).unwrap();
+        assert!(forget_lease(dir.path(), "eth1").unwrap());
+        assert!(!forget_lease(dir.path(), "eth1").unwrap(), "already gone");
+        assert_eq!(load_valid_lease(dir.path(), "eth1", at(1_200)), None);
+        let p = plans(&defaults());
+        assert_eq!(with_persisted_lease(&p.net, dir.path(), at(1_200)), p.net);
     }
 
     #[test]

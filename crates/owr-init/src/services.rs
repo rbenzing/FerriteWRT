@@ -14,6 +14,9 @@ use crate::service::{RestartPolicy, ServiceSpec};
 pub const CHILD_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 /// Applies the persisted config (network, firewall, wifi, daemon configs) at boot.
 pub const APPLY_BIN: &str = "/sbin/owr-apply";
+/// Service of the network daemon (`owr-apply netd`: WAN DHCP client, IPv6 router
+/// advertisements). Runs unconfined, like `owr-apply`: it converges the network.
+pub const NETD_SERVICE: &str = "owr-netd";
 /// Longest `owr-apply boot` may run before it is terminated.
 pub const APPLY_TIMEOUT_MS: u64 = 120_000;
 /// Kernel module loader, executed directly (no shell).
@@ -116,7 +119,7 @@ pub fn build_services(ctx: &ServiceContext) -> Vec<ServiceSpec> {
         kmodloader(),
         apply,
         dnsmasq,
-        daemon("odhcpd", &["/usr/sbin/odhcpd"]),
+        daemon(NETD_SERVICE, &[APPLY_BIN, "--log", "info", "netd"]),
         api,
     ];
     for phy in &ctx.radio_phys {
@@ -182,7 +185,7 @@ mod tests {
         };
         assert_eq!(
             confined(&ctx()),
-            ["dnsmasq", "odhcpd", "hostapd-phy0", "hostapd-phy1"]
+            ["dnsmasq", "hostapd-phy0", "hostapd-phy1"]
         );
         let off = ServiceContext {
             sandbox: false,
@@ -211,7 +214,7 @@ mod tests {
                 "kmodloader",
                 "owr-apply",
                 "dnsmasq",
-                "odhcpd",
+                "owr-netd",
                 "owr-api",
                 "hostapd-phy0",
                 "hostapd-phy1"
@@ -227,6 +230,9 @@ mod tests {
         assert_eq!(apply.exec, ["/sbin/owr-apply", "boot"]);
         assert_eq!(apply.timeout_ms, Some(120_000));
         assert!(apply.ignore_failure, "a failing apply must not block boot");
+        let netd = specs.iter().find(|s| s.name == NETD_SERVICE).unwrap();
+        assert_eq!(netd.exec, ["/sbin/owr-apply", "--log", "info", "netd"]);
+        assert!(!netd.oneshot, "the network daemon runs until stopped");
         for s in &specs[2..] {
             assert_eq!(s.restart, RestartPolicy::Always, "{}", s.name);
             let dep = if s.name == "owr-api" {

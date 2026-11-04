@@ -21,7 +21,10 @@ rustup target list --installed | grep -q "$TARGET" || rustup target add "$TARGET
 # Build first, with errors visible: a test binary that does not compile must fail the run,
 # not silently drop out of the list below.
 cargo test "${sel[@]}" --target "$TARGET" --no-run --quiet || { echo "test build failed" >&2; exit 1; }
+# Test harnesses only (`profile.test`): integration tests also build the crate's binaries,
+# which are not tests and reject the test flags.
 mapfile -t exes < <(cargo test "${sel[@]}" --target "$TARGET" --no-run --message-format=json 2>/dev/null \
+  | grep -E '"profile":\{[^}]*"test":true' \
   | grep -o '"executable":"[^"]*"' | sed 's/"executable":"//; s/"$//' | sed 's#\\\\#/#g')
 
 if [ "${#exes[@]}" -eq 0 ]; then echo "no test executables built" >&2; exit 1; fi
@@ -44,7 +47,11 @@ fail=0
 for exe in "${exes[@]}"; do
   wexe="$(to_wsl "$exe")"
   echo "== $(basename "$exe")"
-  if ! wsl.exe -d "$WSL_DISTRO" -e /bin/sh -c "'$wexe' --test-threads=4 --skip snapshot 2>&1 | tail -n 3"; then
+  # The binary's own exit status decides (a pipe into tail would report tail's); a failing
+  # binary prints its whole output so the failure messages are visible.
+  if ! wsl.exe -d "$WSL_DISTRO" -e /bin/sh -c \
+    "out=\$('$wexe' --test-threads=4 --skip snapshot 2>&1); rc=\$?; \
+     if [ \$rc -eq 0 ]; then printf '%s\n' \"\$out\" | tail -n 3; else printf '%s\n' \"\$out\"; fi; exit \$rc"; then
     fail=1
   fi
 done

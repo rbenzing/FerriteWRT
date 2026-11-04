@@ -15,7 +15,8 @@ touching a router.
 | PID 1 (`owr-init`) | Host tests on the pure state machines; supervisor smoke-tested in `--test-mode` on Linux (WSL) |
 | HTTPS API (`owr-api`) | Tests incl. real TLS 1.2/1.3 handshakes, CSRF/RBAC/rate-limit/audit behaviour |
 | Web UI | Driven in Chromium via Playwright against the mock backend: setup wizard, dashboard, network, wireless pages |
-| Mapping + apply orchestration (`owr-apply`) | Snapshot tests for nft/hostapd/dnsmasq/odhcpd output; apply step order host-tested |
+| Mapping + apply orchestration (`owr-apply`) | Snapshot tests for nft/hostapd/dnsmasq output; apply step order host-tested |
+| Network daemon (`owr-apply netd`) | Router advertisements checked byte for byte over a veth pair on Linux (WSL), including the rate-limited answer to a solicitation; shutdown on SIGTERM tested; the DHCP lease hand-off reuses the apply path |
 | Cross-compilation | Every binary builds as a static executable for `aarch64-unknown-linux-musl` with no C toolchain (not PIE, see below) |
 | OpenWrt image build | Runs in the release workflow (Docker); kernel and package config checked line by line; every board's config checked on each push |
 | Releases | v0.2.0 published: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations |
@@ -31,8 +32,11 @@ binaries for x86_64 musl and runs them inside the WSL `docker-desktop` distro).
   compile-checked and reviewed but have never run against a real kernel.
 - The nft rulesets have not been checked with a real `nft -c`, nor hostapd.conf
   with a real hostapd.
-- IPv6 on the LAN relies on odhcpd, which still needs ubus and is therefore
-  non-functional in this image (phase 2).
+- The network daemon (`owr-netd`) has not run on the router: the WAN DHCP lease, the
+  router advertisements on `br-lan` and clients taking a ULA address from them. IPv6 on
+  the LAN is ULA only (`network.lan.ipv6 = ula`): hosts get an address and the router as
+  DNS server but no IPv6 default route, because there is no WAN IPv6 yet (DHCPv6-PD,
+  phase 2).
 - PPPoE WAN is modelled in the config but not rendered (phase 2).
 
 ## Do not boot the v0.2.0 initramfs image
@@ -62,7 +66,7 @@ Procedure details (U-Boot variables, addresses) are in [BUILD.md](BUILD.md).
    `nft -c -f /run/ferritewrt/firewall.nft`, `hostapd -t` style checks of
    `/run/ferritewrt/*.conf`, a LAN client getting a DHCP lease, NAT to the WAN, both
    radios beaconing, the UI at https://192.168.8.1.
-   From v0.3.0 dnsmasq, odhcpd and hostapd run confined (`owr-init --sandbox`). If one of
+   From v0.3.0 dnsmasq and hostapd run confined (`owr-init --sandbox`). If one of
    them keeps restarting, its journal (`owr` UI logs, or the console) names the refused
    step or file; `touch /etc/ferritewrt/sandbox.off` and restart it to confirm the sandbox
    is the cause, and report the message so the profile can be fixed.

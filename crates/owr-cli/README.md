@@ -20,14 +20,14 @@
 | `config show [--json]` | the config with secrets replaced by `***` |
 | `config init` | write the default config if missing; prints `created` or `exists` |
 | `config set-password <user>` | read one line from stdin, store an argon2id hash; creates the user as admin |
-| `render <net\|fw\|wifi\|dnsmasq\|odhcpd\|sysctl> [--json] [--reveal-secrets]` | what `owr-apply` would apply |
+| `render <net\|fw\|wifi\|dnsmasq\|netd\|sysctl> [--json] [--reveal-secrets]` | what `owr-apply` would apply |
 | `check` | validate config against the board, build all plans, print a summary; exit 1 on failure |
 | `status [--json]` | service table from init over `/run/ferritewrt/init.sock` |
 | `upgrade <dir> [--downgrade] [--wipe-settings]` | hand a release bundle (sysupgrade image, `SHA256SUMS`, `SHA256SUMS.sig`) to init, which verifies it, writes it and reboots; settings are kept unless `--wipe-settings` |
 | `upgrade --check <dir> [--pubkey f]` | the same verification (signature, hash, board, version) anywhere; changes nothing |
 | `release keygen | sums | manifest | sign | verify | show` | build, sign and verify release artifacts (see "Release signing") |
 
-`render`: `fw`, `dnsmasq`, `odhcpd` print text; `net` and `sysctl` print JSON; `wifi` prints one
+`render`: `fw` and `dnsmasq` print text; `net`, `netd` and `sysctl` print JSON; `wifi` prints one
 `# --- <phy> ---` hostapd.conf per radio (`--json`: the radio plans). Wi-Fi passphrases are
 printed as `***` unless `--reveal-secrets`. Without a config file `render` uses the board defaults.
 

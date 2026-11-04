@@ -18,7 +18,7 @@ Adversaries, strongest first:
    secrets.
 5. **Malicious firmware image**: must not be accepted by the upgrader without a valid
    signature (`owr-upgrade`; the stock bootloader is out of scope).
-6. **Compromised network daemon**: a memory-safety bug in dnsmasq, odhcpd or hostapd
+6. **Compromised network daemon**: a memory-safety bug in dnsmasq or hostapd
    (C, parsing LAN and Wi-Fi traffic). Must not reach the settings, the flash, kernel
    modules or other processes.
 
@@ -52,7 +52,7 @@ kernel or the kept C daemons, and side channels on the SoC.
   strong, ARM64 pointer authentication and userspace BTI, zeroed stack variables,
   init-on-alloc, seccomp, Landlock +
   Yama, hardened usercopy/freelists, KASLR, no `/dev/mem`, no `/proc/kcore`, no kexec.
-- **Confined network daemons** (`crates/owr-init/src/sandbox.rs`): dnsmasq, odhcpd and
+- **Confined network daemons** (`crates/owr-init/src/sandbox.rs`): dnsmasq and
   hostapd start through `owr-init --sandbox`, which before `exec` reduces the capability
   bounding set to what each needs (network administration, raw sockets, low ports;
   dnsmasq also its user switch), sets `no_new_privs`, restricts the file system with

@@ -1,7 +1,8 @@
 # owr-net
 
 Declarative network configuration for FerriteWRT (replaces netifd). Pure planner on
-any host; rtnetlink applier and `DHCPv4` client on Linux only.
+any host; rtnetlink applier, `DHCPv4` client and IPv6 router advertisements on Linux
+only. `owr-apply netd` runs the client and the advertisements.
 
 ## Model
 
@@ -62,6 +63,23 @@ Events are never dropped: the client waits for the consumer (or shutdown).
 the lease the link has no address, and strict reverse-path filtering can drop the
 server's reply to the broadcast DISCOVER. The owner (owr-apply) adds it to
 `NetPlan::sysctls` for every DHCP link.
+
+## Router advertisements (`ra`; socket in `linux::ra`)
+
+`RaSpec { link, prefix, dns }` advertises one /64 on one link (RFC 4861): prefix
+information with on-link and autonomous flags (valid 24 h, preferred 4 h) and RDNSS
+(RFC 8106, lifetime 20 min, at most 3 servers). Router lifetime 0 and M = O = 0: hosts
+configure a SLAAC address and learn the DNS server, but the router is not their IPv6
+default gateway (there is no WAN IPv6 yet) and there is no `DHCPv6`. `Pacer` follows the
+RFC 4861 timing: the first three advertisements at most 16 s apart, then every 200-600 s
+at random; a Router Solicitation brings the next one forward by up to 500 ms, never
+sooner than 3 s after the previous one. Everything is multicast to `ff02::1`.
+
+`linux::ra::run` uses a raw ICMPv6 socket bound to the link (hop limit 255, member of
+`ff02::2`). The kernel fills in and checks the checksum; the hop limit of a received
+solicitation cannot be read through this socket, which is harmless: a forged one can only
+trigger one more multicast advertisement, rate-limited as above. Tested end to end over a
+veth pair (root, Linux).
 
 ## Single-writer rule
 

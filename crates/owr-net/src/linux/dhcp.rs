@@ -11,8 +11,9 @@ use std::time::Duration;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch};
-use tracing::{Instrument, info_span, warn};
+use tracing::{Instrument, info, info_span, warn};
 
+use super::sysfs;
 use crate::dhcp::{CLIENT_PORT, Transport, run_with};
 pub use crate::dhcp::{DhcpEvent, Lease};
 use crate::model::{DhcpClientSpec, MacAddr};
@@ -57,27 +58,33 @@ impl Transport for UdpTransport {
     }
 }
 
+/// The socket and the hardware address of `link`.
+fn open(link: &str) -> io::Result<(UdpTransport, MacAddr)> {
+    let mac = sysfs::mac(link)?;
+    Ok((UdpTransport::open(link)?, mac))
+}
+
 /// A `DHCPv4` client for one interface.
 #[derive(Debug)]
 pub struct DhcpClient;
 
 impl DhcpClient {
     /// Run until `shutdown` turns true (or its sender is dropped) or `events` is
-    /// closed. `ifindex` is used for tracing; the socket is bound by `spec.link`.
+    /// closed. The socket is bound to `spec.link`; the client identifies itself with the
+    /// link's hardware address as it is when the socket opens.
     ///
-    /// If the socket cannot be opened (interface missing), retries every 5s.
+    /// If the link or the socket is not available yet, retries every 5s.
     pub async fn run(
         spec: DhcpClientSpec,
-        ifindex: u32,
-        mac: MacAddr,
         events: mpsc::Sender<DhcpEvent>,
         mut shutdown: watch::Receiver<bool>,
     ) {
-        let span = info_span!("dhcp_client", link = %spec.link, ifindex, %mac);
+        let span = info_span!("dhcp_client", link = %spec.link);
         async move {
             loop {
-                match UdpTransport::open(&spec.link) {
-                    Ok(transport) => {
+                match open(&spec.link) {
+                    Ok((transport, mac)) => {
+                        info!(%mac, "dhcp client started");
                         run_with(&transport, spec, mac, events, shutdown).await;
                         return;
                     }

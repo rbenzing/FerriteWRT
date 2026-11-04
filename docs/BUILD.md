@@ -101,7 +101,7 @@ v0.2.0 did not have this check right; boot v0.2.1 or later (see `STATUS.md`).
 | kernel gpio-keys + evdev (built in) | reset/mode buttons read by `owr-init` from `/dev/input` |
 | wpad-basic-mbedtls (hostapd) | WPA2/WPA3 AP; owr-wifi renders `hostapd.conf` |
 | nftables-nojson (`nft`) | loads the ruleset owr-fw renders |
-| dnsmasq, odhcpd-ipv6only, odhcp6c | DHCPv4/DNS, RA/DHCPv6 server, DHCPv6 client (Rust replacements are phase 2) |
+| dnsmasq, odhcp6c | DHCPv4 server/DNS; DHCPv6 client, not used yet (Rust replacements are phase 2) |
 | ppp, ppp-mod-pppoe | PPPoE WAN |
 | busybox (custom, lightly trimmed) | rescue console; the initramfs `/init` needs ash, mount, cp, switch_root |
 | e2fsprogs, f2fsck, mkf2fs | overlay creation/repair; kmod f2fs is built in |
@@ -110,10 +110,11 @@ v0.2.0 did not have this check right; boot v0.2.1 or later (see `STATUS.md`).
 **Present but inert** (`package/base-files/Makefile:45-50` hard-depends on `+netifd +fstools
 +fwtool +procd +jsonfilter +ucode`; netifd pulls `ubus`/`ubusd`): procd, netifd, ubus, ubusd,
 ubox, fstools, uci libs, ucode, libubox/libubus. The kept daemons also link
-`libubus`/`libubox`/`libuci` (dnsmasq, odhcpd, odhcp6c, hostapd). They do nothing because
+`libubus`/`libubox`/`libuci` (dnsmasq, odhcp6c, hostapd). They do nothing because
 `owr-init` is the kernel's default init and `/sbin/init`. `owr-init` must still run
 `/sbin/kmodloader` (from ubox) to load the kmods. Removed outright: dropbear, logd, urngd,
-urandom-seed, uci CLI, uclient-fetch, libustream, ca-bundle, mtd, firewall4, procd-ujail, apk.
+urandom-seed, uci CLI, uclient-fetch, libustream, ca-bundle, mtd, firewall4, procd-ujail, apk,
+odhcpd (router advertisements come from `owr-apply netd`).
 
 **Phase 2 removals:** patch base-files so procd/netifd/ubus/ubox/ucode are not installed and
 build the daemons without ubus; trim busybox to the rescue set; drop fitblk; signed kernel

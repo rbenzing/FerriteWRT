@@ -1025,24 +1025,6 @@ fn empty_local_domain_omits_the_domain_lines() {
     );
 }
 
-// ------------------------------------------------------------------- odhcpd
-
-#[test]
-fn odhcpd_without_ipv6_has_only_the_global_section() {
-    let text = plans(&defaults()).odhcpd_conf;
-    assert!(text.contains("config odhcpd 'odhcpd'"));
-    assert!(text.contains("option maindhcp '0'"));
-    assert!(text.contains("option leasefile '/run/ferritewrt/odhcpd.leases'"));
-    assert!(!text.contains("config dhcp"));
-}
-
-#[test]
-fn odhcpd_with_ula_serves_ra_and_dhcpv6_on_the_bridge_snapshot() {
-    let mut cfg = defaults();
-    cfg.network.lan.ipv6 = c::LanIpv6::Ula;
-    insta::assert_snapshot!("odhcpd_ula", plans(&cfg).odhcpd_conf);
-}
-
 // ------------------------------------------------------------------- resolv
 
 #[test]
@@ -1062,7 +1044,9 @@ fn resolv_conf_lists_one_nameserver_per_line() {
 
 mod files {
     use super::*;
-    use crate::files::{DNSMASQ_CONF, ODHCPD_CONF, RESOLV_AUTO, write_daemon_files, write_resolv};
+    use crate::files::{
+        DNSMASQ_CONF, NETD_PLAN, RESOLV_AUTO, netd_json, write_daemon_files, write_resolv,
+    };
 
     #[test]
     fn writes_every_file_then_reports_unchanged() {
@@ -1070,22 +1054,23 @@ mod files {
         let p = plans(&cfg);
         let dir = tempfile::tempdir().unwrap();
         let first = write_daemon_files(&p, &cfg, dir.path()).unwrap();
-        assert!(first.dnsmasq_changed && first.odhcpd_changed);
+        assert!(first.dnsmasq_changed && first.netd_changed);
         assert_eq!(first.hostapd_changed, [("phy1".to_owned(), true)]);
         assert_eq!(
             std::fs::read_to_string(dir.path().join(DNSMASQ_CONF)).unwrap(),
             p.dnsmasq_conf
         );
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join(ODHCPD_CONF)).unwrap(),
-            p.odhcpd_conf
-        );
+        let netd = std::fs::read_to_string(dir.path().join(NETD_PLAN)).unwrap();
+        assert_eq!(netd, netd_json(&p.netd).unwrap());
+        let json: serde_json::Value = serde_json::from_str(&netd).unwrap();
+        assert_eq!(json["dhcp"]["link"], "eth1");
+        assert_eq!(json["ra"], serde_json::json!([]));
         assert_eq!(
             std::fs::read_to_string(dir.path().join("hostapd-phy1.conf")).unwrap(),
             w::render_hostapd(&p.radios[0]).unwrap()
         );
         let second = write_daemon_files(&p, &cfg, dir.path()).unwrap();
-        assert!(!second.dnsmasq_changed && !second.odhcpd_changed);
+        assert!(!second.dnsmasq_changed && !second.netd_changed);
         assert_eq!(second.hostapd_changed, [("phy1".to_owned(), false)]);
     }
 
@@ -1097,8 +1082,16 @@ mod files {
         cfg.dhcp.rebind_protection = false;
         let again = write_daemon_files(&plans(&cfg), &cfg, dir.path()).unwrap();
         assert!(again.dnsmasq_changed);
-        assert!(!again.odhcpd_changed);
+        assert!(!again.netd_changed);
         assert_eq!(again.hostapd_changed, [("phy1".to_owned(), false)]);
+
+        // The DHCP client sends the hostname: the network daemon must restart.
+        let mut renamed = cfg.clone();
+        renamed.network.wan.proto = c::WanProto::Dhcp {
+            hostname: Some("edge".to_owned()),
+        };
+        let again = write_daemon_files(&plans(&renamed), &renamed, dir.path()).unwrap();
+        assert!(again.netd_changed);
     }
 
     #[test]

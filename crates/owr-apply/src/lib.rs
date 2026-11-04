@@ -1,7 +1,8 @@
 //! Integration layer of ferritewrt: maps the user-facing [`owr_config::Config`] plus the
 //! [`owr_board::Board`] onto the domain plans of `owr-net`, `owr-fw` and `owr-wifi`,
-//! renders the configs of the kept daemons (dnsmasq, odhcpd) and, on Linux ([`run`]),
-//! drives the appliers.
+//! renders the configs of the kept daemons (dnsmasq, hostapd) and, on Linux ([`run`]),
+//! drives the appliers; [`daemon`] is the long-running network daemon (WAN `DHCPv4`
+//! client, IPv6 router advertisements).
 //!
 //! [`build_plans`] is pure and deterministic: the same inputs always give equal [`Plans`],
 //! so applying twice is a no-op. Domain crates never see `owr-config`; the mapping lives
@@ -14,12 +15,14 @@ mod dnsmasq;
 mod error;
 mod fw;
 mod net;
-mod odhcpd;
 mod topology;
 mod wifi;
 
+#[cfg(target_os = "linux")]
+pub mod daemon;
 pub mod files;
 pub mod lease;
+pub mod netd;
 #[cfg(target_os = "linux")]
 pub mod run;
 pub mod steps;
@@ -34,6 +37,7 @@ use owr_config::Config;
 
 pub use dnsmasq::resolv_conf;
 pub use error::MapError;
+pub use netd::NetdPlan;
 pub use wifi::redact_radios;
 
 /// Everything derived from `(Board, Config)`.
@@ -44,8 +48,8 @@ pub struct Plans {
     /// One entry per enabled radio that has at least one AP.
     pub radios: Vec<owr_wifi::RadioPlan>,
     pub dnsmasq_conf: String,
-    /// UCI text for odhcpd (`/etc/config/dhcp`).
-    pub odhcpd_conf: String,
+    /// What the network daemon runs (WAN `DHCPv4` client, router advertisements).
+    pub netd: NetdPlan,
     pub hostname: String,
     /// Same list as `net.sysctls`, kept for callers that only need the kernel knobs.
     pub sysctl: Vec<(String, String)>,
@@ -62,7 +66,7 @@ pub struct Inputs {
     /// Only used when `network.lan.ipv6 = ula`; without it no ULA address is planned and
     /// [`Plans::warnings`] says so.
     pub ula_prefix: Option<Ipv6Net>,
-    /// Where dnsmasq and odhcpd keep their lease and pid files; default `RUN_DIR`.
+    /// Where dnsmasq keeps its lease and pid files; default `RUN_DIR`.
     pub run_dir: Option<PathBuf>,
 }
 
@@ -95,12 +99,15 @@ pub fn build_plans_with(board: &Board, cfg: &Config, inputs: &Inputs) -> Result<
     let fw = fw::build_fw(cfg, &topo)?;
     let radios = wifi::build_radios(board, cfg)?;
     let dnsmasq_conf = dnsmasq::render_dnsmasq(cfg, &topo, &run_dir)?;
-    let odhcpd_conf = odhcpd::render_odhcpd(cfg, &run_dir);
+    let netd = netd::build_netd(&net, topo.wan_dev);
 
     net.validate()?;
     fw.validate().map_err(MapError::Fw)?;
     for radio in &radios {
         radio.validate().map_err(MapError::Wifi)?;
+    }
+    for ra in &netd.ra {
+        ra.validate()?;
     }
     Ok(Plans {
         sysctl: net.sysctls.clone(),
@@ -108,7 +115,7 @@ pub fn build_plans_with(board: &Board, cfg: &Config, inputs: &Inputs) -> Result<
         fw,
         radios,
         dnsmasq_conf,
-        odhcpd_conf,
+        netd,
         hostname: cfg.system.hostname.clone(),
         wan_dev: topo.wan_dev.to_owned(),
         warnings,

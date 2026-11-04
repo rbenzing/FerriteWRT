@@ -792,7 +792,7 @@ async fn service_actions() {
         call(
             &h.app,
             Method::POST,
-            "/api/v1/services/odhcpd/reload",
+            "/api/v1/services/owr-netd/reload",
             None,
             &a
         )

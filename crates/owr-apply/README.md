@@ -1,13 +1,15 @@
 # owr-apply
 
 Turns `(Board, Config)` into the domain plans of `owr-net`, `owr-fw` and `owr-wifi`, renders
-the configs of the kept daemons (dnsmasq, odhcpd) and, on Linux, drives the appliers.
+the configs of the kept daemons (dnsmasq, hostapd) and, on Linux, drives the appliers and runs
+the network daemon (`netd`: WAN DHCPv4 client, IPv6 router advertisements).
 `build_plans` is pure and deterministic (host-tested); `run` is Linux only.
 
 ```
 owr-apply boot|apply [--board P] [--config P]   # Linux; prints the JSON ApplyOutcome
-owr-apply render --what net|fw|wifi|dnsmasq|odhcpd [--board P] [--config P]   # any OS
+owr-apply render --what net|fw|wifi|dnsmasq|netd [--board P] [--config P]   # any OS
 owr-apply check [--board P] [--config P]        # validate_against(board) + mapping
+owr-apply --log info netd [--board P] [--config P]   # Linux; runs until SIGTERM (service owr-netd)
 ```
 
 `boot` creates the default config on first start, `apply` never does; both validate the config against
@@ -37,14 +39,14 @@ on stdout, so the supervisor can restart the daemons whose files changed.
 | `firewall.*` | `default_wan_input`, `hw_offload` (wan + lan ports + vlan netdevs), port forwards -> `Redirect` from `wan`, `wan_in` rule -> input rule, `lan_out` rule -> lan to wan |
 | `wireless` radio + AP | `RadioPlan` per enabled radio with APs: `phy<N>`, `wlan<N>`, `wlan<N>-<k>`, bridge `br-lan` or `br-<vlan>` |
 | `dhcp`, pools, leases | `dnsmasq.conf`; pool = network + `start` .. + `limit`, must fit and exclude the router |
-| `network.lan.ipv6 = ula` | odhcpd UCI file (RA + DHCPv6 on `br-lan`); with a ULA prefix (below) `<prefix>::1/64` on `br-lan` and `<prefix>:<vlan id>::1/64` on every VLAN bridge |
+| `network.lan.ipv6 = ula` | with a ULA prefix (below) `<prefix>::1/64` on `br-lan` and `<prefix>:<vlan id>::1/64` on every VLAN bridge, each advertised by `netd` (`NetdPlan.ra`: the /64, the router address as RDNSS) |
 | fixed list | sysctls (forwarding, rp_filter, syncookies, kptr/dmesg/bpf/ptrace hardening) |
 
 ## ULA prefix
 
 `build_plans` is pure and has no ULA prefix: with `lan.ipv6 = ula` it plans no IPv6 address and
 records a warning in `Plans.warnings`. `build_plans_with(board, cfg, &Inputs)` takes the prefix
-(`Inputs.ula_prefix`, a /48) and `Inputs.run_dir` (where dnsmasq and odhcpd keep lease and pid
+(`Inputs.ula_prefix`, a /48) and `Inputs.run_dir` (where dnsmasq keeps its lease and pid
 files, default `/run/ferritewrt`). `run::apply_all` and `on_dhcp_lease` load the prefix from
 `Paths.ula_file` (`/etc/ferritewrt/ula-prefix`, persistent) or create it: `fd00::/8` plus 40 random
 bits from `/dev/urandom` (`ula::load_or_create`); a malformed file is replaced with a warning.
@@ -63,7 +65,7 @@ dnsmasq runs as its compiled-in default user, which the image must contain; `con
 |---|---|---|
 | `hostapd-<phy>.conf` (0600) | hostapd per radio | restart that radio's hostapd |
 | `dnsmasq.conf` | dnsmasq | restart dnsmasq |
-| `dhcp` (UCI) | odhcpd | restart odhcpd; `owr-init` must link `/etc/config/dhcp` to it |
+| `netd.json` | `owr-apply netd` (a view: the daemon derives the same plan from the config) | restart `owr-netd` |
 | `resolv.conf.auto` | dnsmasq `resolv-file` | none, dnsmasq re-reads it |
 
 ## `apply_all` sequence
@@ -78,7 +80,7 @@ The pure list is `steps::apply_steps(plans)`; `run` only executes it:
 3. network converge (links, addresses, routes, every sysctl **except forwarding**)
 4. final firewall (`nft -f`, with offload)
 5. forwarding sysctls (`net.ipv4.ip_forward`, `net.ipv6.conf.all.forwarding`), written directly
-6. hostapd, dnsmasq and odhcpd configs
+6. hostapd and dnsmasq configs, `netd.json`
 
 Forwarding is never switched on before a ruleset with `policy drop` on forward is loaded. If a
 firewall step fails, both forwarding sysctls are set to 0, the error is logged, whatever ruleset is
@@ -114,9 +116,12 @@ broadcast) to `resolv.conf.auto`; a lease without any keeps the previous file (w
   guest VLAN can query the names of LAN hosts. Per-network views need owr-dns (phase 2).
 - **mt76 quirk**: chosen by `board.wifi.driver` in a fixed list (`mt7915e`, `mt7996e`, `mt7921e`,
   `mt7615e`, `mt7603e`, `mt76x2e`); a field in the board descriptor is the later improvement.
-- **odhcpd** reads UCI through libuci and resolves interfaces over ubus, which does not exist
-  here. The file carries `interface 'lan'` and `ifname 'br-lan'`; whether the stock daemon binds
-  is unverified. Phase 2: replace odhcpd with router advertisements in `owr-net`.
+- **IPv6 is LAN-only (ULA)**: router advertisements carry router lifetime 0, so hosts do not
+  use the router as IPv6 default gateway (there is no WAN IPv6 to route to). No `DHCPv6`
+  server: DNS is announced with RDNSS only.
+- **netd and apply race**: a lease converge in `netd` and an `apply` from the API can overlap.
+  `netd` reloads the config for every lease event, and the API restarts `owr-netd` when
+  `netd.json` changes, so both converge toward the saved config.
 - **PPPoE**: `MapError::Unsupported("pppoe")` (phase 2). `wan.ipv6 = dhcpv6` is ignored (warning).
 - Hostapd configs of radios removed from the config stay in `/run` until reboot; the supervisor
   starts only the radios listed in `hostapd_changed`.

@@ -53,6 +53,22 @@ pub fn save_lease(run_dir: &Path, link: &str, lease: &Lease) -> Result<bool, Fil
     Ok(atomic_write(&lease_path(run_dir, link), &json, LEASE_MODE)? == Outcome::Written)
 }
 
+/// Remove the persisted lease of `link`; `true` when there was one.
+pub fn forget_lease(run_dir: &Path, link: &str) -> Result<bool, FilesError> {
+    if !safe_link(link) {
+        return Err(invalid_input(format!("forgetting lease for link {link:?}")));
+    }
+    let path = lease_path(run_dir, link);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(FilesError::Io {
+            context: format!("removing {}", path.display()),
+            source,
+        }),
+    }
+}
+
 /// Whether the lease has run out at `now`. An infinite lease never expires; a lease whose
 /// end cannot be represented is treated as expired.
 pub fn is_expired(lease: &Lease, now: SystemTime) -> bool {

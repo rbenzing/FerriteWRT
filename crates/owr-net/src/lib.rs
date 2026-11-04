@@ -15,6 +15,7 @@ pub mod dhcp;
 pub mod model;
 pub mod observed;
 pub mod planner;
+pub mod ra;
 pub mod wire;
 
 #[cfg(target_os = "linux")]

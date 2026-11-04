@@ -161,7 +161,7 @@ checkout_openwrt() {
 
 # --- (b) feeds -------------------------------------------------------------------
 # Deliberately no "scripts/feeds update": everything in the diffconfig (kernel, hostapd,
-# nftables, dnsmasq, odhcpd, ppp, firmware, busybox) is in-tree, and no LuCI is built.
+# nftables, dnsmasq, odhcp6c, ppp, firmware, busybox) is in-tree, and no LuCI is built.
 # A package that is not in-tree would not survive "make defconfig", and the .config
 # check below then fails naming it.
 check_no_feeds() {

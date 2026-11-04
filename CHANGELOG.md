@@ -32,6 +32,22 @@ All notable changes to FerriteWRT are recorded here. The format follows
   mount, namespace, kexec, reboot, ptrace, bpf, `io_uring`, keyring and clock syscalls with
   seccomp, then execs the daemon. Fails closed; `/etc/ferritewrt/sandbox.off` turns it off.
   New dependencies: `landlock`, `seccompiler`, `libc` (pure Rust).
+- Network daemon `owr-apply netd` (service `owr-netd`): runs the WAN DHCPv4 client and
+  applies its leases, and sends IPv6 router advertisements (`owr-net` `ra`: SLAAC prefix and
+  RDNSS, RFC 4861 timing, answers router solicitations) on every LAN-side bridge with a ULA
+  /64. Router lifetime 0: LAN hosts get IPv6 addresses and the router as DNS server, not an
+  IPv6 default route (no WAN IPv6 yet). `owr-apply render --what netd` / `owr render netd`
+  print its plan; `<run_dir>/netd.json` changing restarts it; SIGHUP restarts it cleanly.
+
+### Fixed
+- The WAN DHCPv4 client was never started by any process, so a router on the default
+  (DHCP) WAN would not have obtained a WAN address.
+- `scripts/linux-tests.sh` reported success when a Linux test failed (the exit status of a
+  `tail` pipe was checked) and ran crate binaries as if they were tests.
+
+### Removed
+- odhcpd: not built into the image, no service, no sandbox profile. It needed ubus and UCI,
+  so IPv6 on the LAN never worked with it.
 
 ### Changed
 - The release signature contract (`SHA256SUMS`, `SHA256SUMS.sig`) lives in `owr-upgrade`

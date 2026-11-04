@@ -53,6 +53,8 @@ pub enum MapError {
     Wifi(Vec<owr_wifi::Issue>),
     #[error("network plan is invalid: {0}")]
     Net(#[from] owr_net::ValidationError),
+    #[error("router advertisement is invalid: {0}")]
+    Ra(#[from] owr_net::ra::RaSpecError),
 }
 
 impl MapError {

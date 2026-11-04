@@ -1,5 +1,6 @@
 //! `owr-apply`: apply the configuration to the running system, or render what would be
-//! applied. `render` and `check` are pure and work on any OS; `boot` and `apply` need Linux.
+//! applied. `render` and `check` are pure and work on any OS; `boot`, `apply` and `netd`
+//! need Linux.
 
 #![forbid(unsafe_code)]
 
@@ -41,6 +42,9 @@ enum Command {
     },
     /// Validate the config against the board and the mapping to plans
     Check(Sources),
+    /// Run the network daemon (WAN DHCP client, IPv6 router advertisements) until
+    /// SIGTERM; never creates defaults (Linux)
+    Netd(Sources),
 }
 
 #[derive(Debug, Args)]
@@ -64,8 +68,8 @@ enum What {
     Wifi,
     /// dnsmasq.conf
     Dnsmasq,
-    /// odhcpd configuration (UCI)
-    Odhcpd,
+    /// Network daemon plan as JSON (DHCP client, router advertisements)
+    Netd,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -89,7 +93,9 @@ enum CliError {
     #[error(transparent)]
     Apply(#[from] owr_apply::run::ApplyError),
     #[cfg_attr(target_os = "linux", allow(dead_code))]
-    #[error("boot and apply need Linux (netlink, nftables); use `render` or `check` on this host")]
+    #[error(
+        "boot, apply and netd need Linux (netlink, nftables); use `render` or `check` on this host"
+    )]
     NotLinux,
 }
 
@@ -132,12 +138,13 @@ fn run(command: Command) -> Result<(), CliError> {
         }
         Command::Apply(src) => {
             ensure_linux()?;
-            let board = load_board(&src)?;
-            let path = src.config.unwrap_or_else(|| PathBuf::from(CONFIG_FILE));
-            // Board-aware validation: a config that names ports or radios the board does not
-            // have must not be applied.
-            let cfg = Store::new(path).load_for(&board)?;
+            let (board, cfg) = load_for_apply(&src)?;
             apply_on_system(&board, &cfg)
+        }
+        Command::Netd(src) => {
+            ensure_linux()?;
+            let (board, cfg) = load_for_apply(&src)?;
+            run_netd(board, cfg, &src)
         }
         Command::Render { what, sources } => {
             let (board, cfg) = load_readonly(sources)?;
@@ -193,6 +200,18 @@ fn read_config_readonly(path: &Path) -> Result<Config, ConfigError> {
 /// Board and config for the pure subcommands, validated against the board and never
 /// written back. Without `--config` and without an installed config file the board
 /// defaults are used.
+/// Board and config for changing the system. Board-aware validation: a config that names
+/// ports or radios the board does not have must not be applied.
+fn load_for_apply(src: &Sources) -> Result<(Board, Config), CliError> {
+    let board = load_board(src)?;
+    let path = src
+        .config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(CONFIG_FILE));
+    let cfg = Store::new(path).load_for(&board)?;
+    Ok((board, cfg))
+}
+
 fn load_readonly(src: Sources) -> Result<(Board, Config), CliError> {
     let board = load_board(&src)?;
     let cfg = match src.config {
@@ -219,12 +238,12 @@ fn render(what: What, board: &Board, cfg: &Config) -> Result<(), CliError> {
             println!("{}", serde_json::to_string_pretty(&radios)?);
         }
         What::Dnsmasq => print!("{}", plans.dnsmasq_conf),
-        What::Odhcpd => print!("{}", plans.odhcpd_conf),
+        What::Netd => println!("{}", serde_json::to_string_pretty(&plans.netd)?),
     }
     Ok(())
 }
 
-/// `boot` and `apply` need netlink and nftables. (`cfg!` instead of two cfg'd functions: a
+/// `boot`, `apply` and `netd` need netlink and nftables. (`cfg!` instead of two cfg'd functions: a
 /// function that always returns `Ok` on Linux trips `clippy::unnecessary_wraps`.)
 fn ensure_linux() -> Result<(), CliError> {
     if cfg!(target_os = "linux") {
@@ -269,6 +288,22 @@ fn print_outcome(outcome: &owr_apply::run::ApplyOutcome) -> Result<(), CliError>
 
 #[cfg(not(target_os = "linux"))]
 fn apply_on_system(_board: &Board, _cfg: &Config) -> Result<(), CliError> {
+    Err(CliError::NotLinux)
+}
+
+#[cfg(target_os = "linux")]
+fn run_netd(board: Board, cfg: Config, src: &Sources) -> Result<(), CliError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(CliError::Runtime)?;
+    let paths = owr_apply::run::Paths::default();
+    let reload = || load_for_apply(src);
+    Ok(runtime.block_on(owr_apply::daemon::run(board, cfg, reload, &paths))?)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_netd(_board: Board, _cfg: Config, _src: &Sources) -> Result<(), CliError> {
     Err(CliError::NotLinux)
 }
 

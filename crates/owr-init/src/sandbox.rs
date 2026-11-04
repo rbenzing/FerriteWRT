@@ -1,5 +1,5 @@
 //! Confinement profiles for the C daemons that parse untrusted network input (dnsmasq,
-//! odhcpd, hostapd). Pure data; the Linux launcher (`owr-init --sandbox <profile> -- argv`)
+//! hostapd). Pure data; the Linux launcher (`owr-init --sandbox <profile> -- argv`)
 //! enforces it and then `exec`s the daemon, which inherits every restriction:
 //!
 //! * capability bounding set reduced to [`Profile::keep_caps`] (the daemon still starts as
@@ -93,8 +93,8 @@ fn strings(items: &[&str]) -> Vec<String> {
 
 /// The profile for a service name, `None` if the service runs unconfined.
 pub fn profile_for(service: &str) -> Option<Profile> {
-    let p = match service {
-        "dnsmasq" => Profile {
+    if service == "dnsmasq" {
+        return Some(Profile {
             name: service.to_owned(),
             keep_caps: vec![
                 Cap::NetBindService,
@@ -108,34 +108,21 @@ pub fn profile_for(service: &str) -> Option<Profile> {
             write_trees: Vec::new(),
             own_dirs: Vec::new(),
             devices: Vec::new(),
-        },
-        "odhcpd" => Profile {
-            name: service.to_owned(),
-            keep_caps: vec![Cap::NetBindService, Cap::NetAdmin, Cap::NetRaw],
-            // `/etc/config/dhcp` links to the rendered file.
-            read_files: vec![run("dhcp")],
-            write_files: vec![run("odhcpd.leases")],
-            write_trees: strings(&["/proc/sys/net"]),
-            own_dirs: Vec::new(),
-            devices: Vec::new(),
-        },
-        _ => {
-            let phy = service.strip_prefix("hostapd-phy")?;
-            if phy.is_empty() || !phy.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
-            Profile {
-                name: service.to_owned(),
-                keep_caps: vec![Cap::NetAdmin, Cap::NetRaw],
-                read_files: vec![run(&format!("hostapd-phy{phy}.conf"))],
-                write_files: Vec::new(),
-                write_trees: strings(&["/proc/sys/net"]),
-                own_dirs: vec![run("hostapd")],
-                devices: strings(&["/dev/rfkill"]),
-            }
-        }
-    };
-    Some(p)
+        });
+    }
+    let phy = service.strip_prefix("hostapd-phy")?;
+    if phy.is_empty() || !phy.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(Profile {
+        name: service.to_owned(),
+        keep_caps: vec![Cap::NetAdmin, Cap::NetRaw],
+        read_files: vec![run(&format!("hostapd-phy{phy}.conf"))],
+        write_files: Vec::new(),
+        write_trees: strings(&["/proc/sys/net"]),
+        own_dirs: vec![run("hostapd")],
+        devices: strings(&["/dev/rfkill"]),
+    })
 }
 
 /// The argv that starts `exec` under `profile` through the launcher.
@@ -169,10 +156,10 @@ mod tests {
         assert_eq!(h.read_files, ["/run/ferritewrt/hostapd-phy1.conf"]);
         assert_eq!(h.own_dirs, ["/run/ferritewrt/hostapd"]);
         assert!(!h.keep_caps.contains(&Cap::NetBindService));
-        assert!(profile_for("odhcpd").is_some());
         for unconfined in [
             "owr-api",
             "owr-apply",
+            "owr-netd",
             "kmodloader",
             "hostapd-phy",
             "hostapd-phyx",
@@ -183,7 +170,7 @@ mod tests {
 
     #[test]
     fn no_profile_reaches_the_settings_directory() {
-        for name in ["dnsmasq", "odhcpd", "hostapd-phy0"] {
+        for name in ["dnsmasq", "hostapd-phy0"] {
             let p = profile_for(name).unwrap();
             let paths = p
                 .read_files
@@ -202,15 +189,15 @@ mod tests {
 
     #[test]
     fn launcher_argv_wraps_the_command() {
-        let exec = vec!["/usr/sbin/odhcpd".to_owned()];
+        let exec = vec!["/usr/sbin/dnsmasq".to_owned()];
         assert_eq!(
-            launcher_argv("odhcpd", &exec),
+            launcher_argv("dnsmasq", &exec),
             [
                 "/sbin/owr-init",
                 "--sandbox",
-                "odhcpd",
+                "dnsmasq",
                 "--",
-                "/usr/sbin/odhcpd"
+                "/usr/sbin/dnsmasq"
             ]
         );
     }

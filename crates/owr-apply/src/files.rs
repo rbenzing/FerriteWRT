@@ -4,7 +4,7 @@
 //! |---|---|---|
 //! | `hostapd-<phy>.conf` | hostapd | 0600 (passphrases; written by `owr-wifi`) |
 //! | `dnsmasq.conf` | dnsmasq | 0644 |
-//! | `dhcp` | odhcpd (`/etc/config/dhcp` must link here) | 0644 |
+//! | `netd.json` | `owr-apply netd` (read-only view; a change restarts the daemon) | 0644 |
 //! | `resolv.conf.auto` | dnsmasq `resolv-file` | 0644 |
 
 use std::io;
@@ -15,13 +15,13 @@ use owr_common::{AtomicWriteError, Outcome, atomic_write};
 use owr_config::{Config, WanProto};
 use serde::Serialize;
 
-use crate::Plans;
 use crate::dnsmasq::resolv_conf;
+use crate::{NetdPlan, Plans};
 
 /// File name of the dnsmasq configuration inside the run directory.
 pub const DNSMASQ_CONF: &str = "dnsmasq.conf";
-/// File name of the odhcpd (UCI) configuration inside the run directory.
-pub const ODHCPD_CONF: &str = "dhcp";
+/// File name of the network daemon plan inside the run directory.
+pub const NETD_PLAN: &str = "netd.json";
 /// File name of the upstream resolver list inside the run directory.
 pub const RESOLV_AUTO: &str = "resolv.conf.auto";
 
@@ -45,7 +45,7 @@ pub struct DaemonFiles {
     /// `(phy, changed)` for every radio that has a hostapd config.
     pub hostapd_changed: Vec<(String, bool)>,
     pub dnsmasq_changed: bool,
-    pub odhcpd_changed: bool,
+    pub netd_changed: bool,
 }
 
 /// Write one daemon config file; `true` when its content changed.
@@ -54,12 +54,22 @@ fn write_text(run_dir: &Path, file: &str, text: &str) -> Result<bool, FilesError
     Ok(atomic_write(&path, text.as_bytes(), DAEMON_MODE)? == Outcome::Written)
 }
 
+/// The text of `netd.json`: pretty JSON with a trailing newline.
+pub fn netd_json(plan: &NetdPlan) -> Result<String, FilesError> {
+    let mut text = serde_json::to_string_pretty(plan).map_err(|e| FilesError::Io {
+        context: format!("rendering {NETD_PLAN}"),
+        source: io::Error::other(e),
+    })?;
+    text.push('\n');
+    Ok(text)
+}
+
 /// Write `<run_dir>/resolv.conf.auto` for `dns`; `true` when its content changed.
 pub fn write_resolv(run_dir: &Path, dns: &[IpAddr]) -> Result<bool, FilesError> {
     write_text(run_dir, RESOLV_AUTO, &resolv_conf(dns))
 }
 
-/// Write hostapd configs, `dnsmasq.conf`, the odhcpd config and the initial
+/// Write hostapd configs, `dnsmasq.conf`, the network daemon plan and the initial
 /// `resolv.conf.auto` below `run_dir` (created if missing).
 ///
 /// A static WAN writes its DNS servers into `resolv.conf.auto`; a DHCP WAN only makes sure
@@ -95,7 +105,7 @@ pub fn write_daemon_files_partial(
             .push((radio.phy.clone(), outcome == Outcome::Written));
     }
     out.dnsmasq_changed = write_text(run_dir, DNSMASQ_CONF, &plans.dnsmasq_conf)?;
-    out.odhcpd_changed = write_text(run_dir, ODHCPD_CONF, &plans.odhcpd_conf)?;
+    out.netd_changed = write_text(run_dir, NETD_PLAN, &netd_json(&plans.netd)?)?;
     match &cfg.network.wan.proto {
         WanProto::Static { dns, .. } => {
             write_resolv(run_dir, dns)?;
