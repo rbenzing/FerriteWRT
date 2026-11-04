@@ -7,31 +7,26 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer as _, SigningKey};
 use owr_common::atomic_write;
 use rand::TryRngCore as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
-use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
+
+use owr_upgrade::release::{self, SIG_FILE, SUMS_FILE, decode32, parse_sums, valid_file_name};
+use owr_upgrade::version::valid_version;
 
 use crate::CliError;
 use crate::commands::{Exit, io_error};
 
-pub(crate) const SUMS_FILE: &str = "SHA256SUMS";
-pub(crate) const SIG_FILE: &str = "SHA256SUMS.sig";
 pub(crate) const MANIFEST_FILE: &str = "manifest.json";
 /// Environment variable holding the signing seed (64 hex chars).
 pub(crate) const KEY_ENV: &str = "OWR_RELEASE_KEY";
-const SIG_MAGIC: &str = "ferritewrt-sig/1";
-const HASH_BUF: usize = 1024 * 1024;
 const PUBLIC_MODE: u32 = 0o644;
 const SECRET_MODE: u32 = 0o600;
 
@@ -83,24 +78,6 @@ pub(crate) struct ManifestArgs {
 
 // --- validation helpers --------------------------------------------------------------
 
-/// `MAJOR.MINOR.PATCH[-prerelease]`, no leading `v`.
-fn valid_version(s: &str) -> bool {
-    let (core, pre) = match s.split_once('-') {
-        Some((core, pre)) => (core, Some(pre)),
-        None => (s, None),
-    };
-    let parts: Vec<&str> = core.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-        && pre.is_none_or(|p| {
-            !p.is_empty()
-                && p.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-        })
-}
-
 /// `unknown` or dotted numbers such as `6.18.3`.
 fn valid_kernel(s: &str) -> bool {
     s == "unknown"
@@ -116,49 +93,11 @@ fn valid_token(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-/// File names that can live in `SHA256SUMS` unambiguously (no directories, no escapes).
-fn valid_file_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name
-            .chars()
-            .any(|c| c.is_control() || c == '/' || c == '\\')
-}
-
-fn lower_hex(s: &str, len: usize) -> bool {
-    s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
-fn decode32(s: &str) -> Option<[u8; 32]> {
-    let mut out = [0u8; 32];
-    if s.len() != 64 {
-        return None;
-    }
-    hex::decode_to_slice(s, &mut out).ok()?;
-    Some(out)
-}
-
 // --- files and hashing ---------------------------------------------------------------
 
 /// Streaming SHA-256 and size of a file (images are hundreds of MB).
 fn hash_file(path: &Path) -> Result<(String, u64), CliError> {
-    let mut file = File::open(path).map_err(|e| io_error(path, &e))?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; HASH_BUF];
-    let mut size: u64 = 0;
-    loop {
-        let n = match file.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(io_error(path, &e)),
-        };
-        let Some(chunk) = buf.get(..n) else { break };
-        hasher.update(chunk);
-        size = size.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
-    }
-    Ok((hex::encode(hasher.finalize()), size))
+    release::hash_file(path).map_err(|e| io_error(path, &e))
 }
 
 /// Names of the regular files in `dir` (symlinks and directories are skipped), sorted
@@ -190,46 +129,6 @@ fn regular_files(dir: &Path, exclude: &[&str]) -> Result<Vec<String>, CliError> 
     }
     names.sort_unstable();
     Ok(names)
-}
-
-#[derive(Debug)]
-struct SumEntry {
-    hash: String,
-    name: String,
-}
-
-/// Strict `sha256sum` text-mode parser: `<64 lowercase hex>  <name>\n` per line.
-fn parse_sums(bytes: &[u8]) -> Result<Vec<SumEntry>, String> {
-    let text = std::str::from_utf8(bytes).map_err(|_| "not valid UTF-8".to_owned())?;
-    let body = text
-        .strip_suffix('\n')
-        .ok_or_else(|| "missing final newline".to_owned())?;
-    let mut seen = BTreeSet::new();
-    let mut entries = Vec::new();
-    for (i, line) in body.split('\n').enumerate() {
-        let lineno = i.saturating_add(1);
-        let (Some(hash), Some("  "), Some(name)) =
-            (line.get(..64), line.get(64..66), line.get(66..))
-        else {
-            return Err(format!("line {lineno}: expected '<sha256>  <name>'"));
-        };
-        if !lower_hex(hash, 64) {
-            return Err(format!(
-                "line {lineno}: hash is not 64 lowercase hex digits"
-            ));
-        }
-        if !valid_file_name(name) {
-            return Err(format!("line {lineno}: invalid file name {name:?}"));
-        }
-        if !seen.insert(name) {
-            return Err(format!("line {lineno}: duplicate entry {name:?}"));
-        }
-        entries.push(SumEntry {
-            hash: hash.to_owned(),
-            name: name.to_owned(),
-        });
-    }
-    Ok(entries)
 }
 
 // --- keygen --------------------------------------------------------------------------
@@ -517,11 +416,9 @@ pub(crate) fn sign(
     }
     let key = signing_key(key_hex)?;
     let signature = key.sign(&bytes);
-    let pub_hex = hex::encode(key.verifying_key().to_bytes());
-    let text = format!(
-        "{SIG_MAGIC}\nkey: {pub_hex}\nsig: {}\n",
-        STANDARD.encode(signature.to_bytes())
-    );
+    let pubkey = key.verifying_key().to_bytes();
+    let pub_hex = hex::encode(pubkey);
+    let text = release::signature_text(&pubkey, &signature.to_bytes());
     atomic_write(&sig_path, text.as_bytes(), PUBLIC_MODE)?;
     writeln!(out, "signed {} with key {pub_hex}", sums_path.display())?;
     Ok(())
@@ -596,35 +493,7 @@ fn resolve_targets(paths: &[PathBuf]) -> Result<(PathBuf, Option<BTreeSet<String
 fn check_signature(dir: &Path, sums: &[u8], pubkey: &[u8; 32]) -> Result<(), String> {
     let text = fs::read_to_string(dir.join(SIG_FILE))
         .map_err(|e| format!("cannot read {SIG_FILE}: {e}"))?;
-    let body = text
-        .strip_suffix('\n')
-        .ok_or("malformed signature file: missing final newline")?;
-    let mut lines = body.split('\n');
-    let (Some(magic), Some(key_line), Some(sig_line), None) =
-        (lines.next(), lines.next(), lines.next(), lines.next())
-    else {
-        return Err("malformed signature file: expected exactly three lines".to_owned());
-    };
-    if magic != SIG_MAGIC {
-        return Err(format!("unsupported signature format {magic:?}"));
-    }
-    let key_hex = key_line
-        .strip_prefix("key: ")
-        .filter(|k| lower_hex(k, 64))
-        .ok_or("malformed key line")?;
-    let expected_hex = hex::encode(pubkey);
-    if !bool::from(key_hex.as_bytes().ct_eq(expected_hex.as_bytes())) {
-        return Err(format!("signed by key {key_hex}, expected {expected_hex}"));
-    }
-    let sig_bytes = sig_line
-        .strip_prefix("sig: ")
-        .and_then(|s| STANDARD.decode(s).ok())
-        .and_then(|b| <[u8; 64]>::try_from(b).ok())
-        .ok_or("malformed sig line (expected base64 of 64 bytes)")?;
-    VerifyingKey::from_bytes(pubkey)
-        .map_err(|_| "invalid public key".to_owned())?
-        .verify_strict(sums, &Signature::from_bytes(&sig_bytes))
-        .map_err(|_| "signature does not match SHA256SUMS".to_owned())
+    release::verify_signature(&text, sums, pubkey)
 }
 
 /// Checks the manifest's artifacts against the (already verified) sums. Returns `false`
@@ -752,6 +621,10 @@ pub(crate) fn verify(out: &mut dyn Write, args: &VerifyArgs) -> Result<Exit, Cli
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use owr_upgrade::release::lower_hex;
+
     use super::*;
 
     const KEY_A: &str = "0101010101010101010101010101010101010101010101010101010101010101";
@@ -939,11 +812,8 @@ mod tests {
         let dir = signed_release(FILES);
         let sig_path = dir.path().join(SIG_FILE);
         let forged = signing_key(&"02".repeat(32)).unwrap().sign(b"other bytes");
-        let text = format!(
-            "{SIG_MAGIC}\nkey: {}\nsig: {}\n",
-            pub_of(KEY_A),
-            STANDARD.encode(forged.to_bytes())
-        );
+        let key_a = signing_key(KEY_A).unwrap().verifying_key().to_bytes();
+        let text = release::signature_text(&key_a, &forged.to_bytes());
         fs::write(&sig_path, text).unwrap();
         let (exit, text) = verify_with(dir.path(), &pub_of(KEY_A), false);
         assert_eq!(exit, Exit::Issues);
@@ -1317,16 +1187,5 @@ mod tests {
         ] {
             assert!(parse_sums(bad.as_bytes()).is_err(), "{bad:?}");
         }
-    }
-
-    #[test]
-    fn hash_file_streams_across_buffer_boundaries() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = vec![7u8; HASH_BUF * 2 + 13];
-        let path = dir.path().join("big");
-        fs::write(&path, &data).unwrap();
-        let (hash, size) = hash_file(&path).unwrap();
-        assert_eq!(size, u64::try_from(data.len()).unwrap());
-        assert_eq!(hash, hex::encode(Sha256::digest(&data)));
     }
 }

@@ -217,6 +217,10 @@ stage_rootfs() {
   for b in "$OUT_DIR"/bin/*; do install -m 0755 "$b" "$stage/sbin/$(basename "$b")"; done
   ln -sfn owr-init "$stage/sbin/init"
   install -m 0644 "$BOARD_TOML" "$stage/etc/ferritewrt/board.toml"
+  # Upgrades verify against this key (owr_common::paths::RELEASE_KEY_FILE).
+  grep -Eqx '[0-9a-f]{64}' "$REPO_ROOT/keys/release.pub" \
+    || die "keys/release.pub is not a 64-hex-digit public key"
+  install -D -m 0644 "$REPO_ROOT/keys/release.pub" "$stage/usr/share/ferritewrt/release.pub"
   install -d -m 0755 "$OPENWRT_DIR/files"
   rsync -a --delete --checksum "$stage/" "$OPENWRT_DIR/files/"
   log "staged rootfs overlay: $(find "$stage" \( -type f -o -type l \) | wc -l) entries -> $OPENWRT_DIR/files"
@@ -326,7 +330,9 @@ verify_rootfs() {
     || die "$root/sbin/init is not a symlink to owr-init (found: $(ls -l "$root/sbin/init" 2>&1)); the overlay did not replace procd's init"
   [ -x "$root/sbin/owr-init" ] || die "$root/sbin/owr-init missing"
   [ -f "$root/etc/ferritewrt/board.toml" ] || die "$root/etc/ferritewrt/board.toml missing"
-  log "rootfs check: /sbin/init -> owr-init, board.toml present"
+  cmp -s "$root/usr/share/ferritewrt/release.pub" "$REPO_ROOT/keys/release.pub" \
+    || die "$root/usr/share/ferritewrt/release.pub missing or not keys/release.pub"
+  log "rootfs check: /sbin/init -> owr-init, board.toml and release.pub present"
 }
 
 # --- (g)(h) collect and summarise ------------------------------------------------

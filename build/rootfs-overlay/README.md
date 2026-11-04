@@ -18,6 +18,7 @@ therefore stages the overlay in `build/out/rootfs/` and rsyncs it to `<openwrt>/
 | `/sbin/owr-init`, `/sbin/owr-api`, `/sbin/owr` | `cargo xbuild` (aarch64-unknown-linux-musl, static; not PIE, see `docs/STATUS.md`) | mode 0755. `/sbin/owr-apply` is copied too if the workspace builds it. |
 | `/sbin/init` | symlink to `owr-init`, created by the script | Replaces procd's `/sbin/init`. `cp -f` is expected to replace the old file; the build verifies the result and fails if `/sbin/init` is not this symlink. |
 | `/etc/ferritewrt/board.toml` | `boards/<board>.toml` | copied by the script so the descriptor has one source of truth |
+| `/usr/share/ferritewrt/release.pub` | `keys/release.pub` | release signing public key; upgrades verify against it. Outside `/etc/ferritewrt` on purpose: settings survive an upgrade, the key comes from the new image |
 | everything else in this directory | this directory | rsynced as is; `README.md` and `.gitkeep` are skipped |
 
 Add a file here only for static content that is identical on every board and every

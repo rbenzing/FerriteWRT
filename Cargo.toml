@@ -39,6 +39,7 @@ owr-wifi = { path = "crates/owr-wifi" }
 owr-init = { path = "crates/owr-init" }
 owr-api = { path = "crates/owr-api" }
 owr-apply = { path = "crates/owr-apply" }
+owr-upgrade = { path = "crates/owr-upgrade" }
 # External: pure Rust only (see deny.toml). Pin minor versions.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

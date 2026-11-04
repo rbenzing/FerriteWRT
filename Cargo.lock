@@ -1204,12 +1204,11 @@ dependencies = [
  "owr-config",
  "owr-fw",
  "owr-init",
+ "owr-upgrade",
  "owr-wifi",
  "rand 0.9.5",
  "serde",
  "serde_json",
- "sha2 0.11.1",
- "subtle",
  "tempfile",
  "thiserror",
  "tracing",
@@ -1298,6 +1297,20 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "owr-upgrade"
+version = "0.2.1"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "hex",
+ "owr-board",
+ "sha2 0.11.1",
+ "subtle",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
