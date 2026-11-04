@@ -310,7 +310,10 @@ mod tests {
     #[test]
     fn prune_handles_missing_and_non_directory_paths() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(prune_upper(&dir.path().join("absent")).unwrap().is_empty());
+        assert_eq!(
+            prune_upper(&dir.path().join("absent")).unwrap(),
+            Vec::<PathBuf>::new()
+        );
         // A file where etc/ should be (stands in for an overlay whiteout of /etc).
         fs::write(dir.path().join("etc"), "").unwrap();
         fs::write(dir.path().join("other"), "").unwrap();

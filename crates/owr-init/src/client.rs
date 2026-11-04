@@ -13,6 +13,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::control::{ERR_UNKNOWN_SERVICE, MAX_JOURNAL_BYTES, MAX_JOURNAL_LIMIT};
+#[cfg(unix)]
+use crate::control::{UPGRADE_DEADLINE, UpgradeRequest};
 use crate::manager::valid_service_name;
 
 /// Read and write timeout of one control connection.
@@ -28,6 +30,9 @@ pub enum ClientError {
     /// The service name would not survive the request line (init would refuse it too).
     #[error("invalid service name")]
     BadName,
+    /// The upgrade directory is not an absolute path of plain characters.
+    #[error("invalid upgrade directory (absolute path of [A-Za-z0-9._/-], no ..)")]
+    BadUpgradeDir,
     #[error("init control socket: {0}")]
     Io(#[from] io::Error),
     #[error("init reply is larger than {MAX_REPLY_BYTES} bytes")]
@@ -215,10 +220,14 @@ impl InitClient {
     }
 
     fn request(&self, line: &str) -> Result<Vec<u8>, ClientError> {
+        self.request_within(line, TIMEOUT)
+    }
+
+    fn request_within(&self, line: &str, timeout: Duration) -> Result<Vec<u8>, ClientError> {
         use std::io::Write as _;
 
         let mut sock = std::os::unix::net::UnixStream::connect(&self.path)?;
-        sock.set_read_timeout(Some(TIMEOUT))?;
+        sock.set_read_timeout(Some(timeout))?;
         sock.set_write_timeout(Some(TIMEOUT))?;
         sock.write_all(line.as_bytes())?;
         read_reply(sock)
@@ -258,6 +267,14 @@ impl InitClient {
 
     pub fn poweroff(&self) -> Result<(), ClientError> {
         parse_ack(&self.request("poweroff\n")?)
+    }
+
+    /// Ask init to verify and install the bundle in `req.dir`. `Ok` means init accepted it:
+    /// services are stopping and the router reboots into the new image when the write is done.
+    /// Verification takes seconds, so this waits up to [`UPGRADE_DEADLINE`].
+    pub fn upgrade(&self, req: &UpgradeRequest) -> Result<(), ClientError> {
+        let line = req.line().ok_or(ClientError::BadUpgradeDir)?;
+        parse_ack(&self.request_within(&line, UPGRADE_DEADLINE)?)
     }
 }
 

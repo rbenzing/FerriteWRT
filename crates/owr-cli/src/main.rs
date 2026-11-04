@@ -10,6 +10,7 @@
 mod commands;
 mod release;
 mod status;
+mod upgrade;
 
 use std::io::{self, Write as _};
 use std::path::PathBuf;
@@ -19,7 +20,7 @@ use std::time::SystemTime;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{Env, Exit};
 use owr_board::Board;
-use owr_common::paths::CONFIG_FILE;
+use owr_common::paths::{CONFIG_FILE, RELEASE_KEY_FILE};
 
 #[derive(Debug, Parser)]
 #[command(name = "owr", version, about = "ferritewrt router control tool")]
@@ -75,6 +76,23 @@ enum Command {
         /// Print init's JSON reply unchanged
         #[arg(long)]
         json: bool,
+    },
+    /// Install a release bundle (router), or verify one with --check (anywhere)
+    Upgrade {
+        /// Directory holding the sysupgrade image, SHA256SUMS and SHA256SUMS.sig
+        dir: PathBuf,
+        /// Verify signature, hash, board and version only; change nothing
+        #[arg(long)]
+        check: bool,
+        /// Accept a version older than the running one
+        #[arg(long)]
+        downgrade: bool,
+        /// Reset all settings on the first boot of the new image
+        #[arg(long)]
+        wipe_settings: bool,
+        /// Release public key (--check only; init always uses the installed one)
+        #[arg(long, default_value = RELEASE_KEY_FILE)]
+        pubkey: PathBuf,
     },
 }
 
@@ -203,7 +221,7 @@ pub(crate) enum CliError {
     #[error(transparent)]
     Atomic(#[from] owr_common::AtomicWriteError),
     #[cfg_attr(unix, allow(dead_code))]
-    #[error("status requires the router")]
+    #[error("this command requires the router")]
     NotRouter,
 }
 
@@ -213,7 +231,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(exit) => ExitCode::from(exit.code()),
         Err(CliError::NotRouter) => {
-            let _ = writeln!(io::stdout(), "status requires the router");
+            let _ = writeln!(io::stdout(), "{}", CliError::NotRouter);
             ExitCode::from(2)
         }
         Err(err) => {
@@ -265,6 +283,26 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         } => commands::render(out, &env, what, json, reveal_secrets).map(|()| Exit::Ok),
         Command::Check => commands::check(out, &env),
         Command::Status { json } => status::run(out, json).map(|()| Exit::Ok),
+        Command::Upgrade {
+            dir,
+            check,
+            downgrade,
+            wipe_settings,
+            pubkey,
+        } => {
+            let args = upgrade::Args {
+                dir,
+                allow_downgrade: downgrade,
+                wipe_settings,
+                pubkey,
+            };
+            if check {
+                upgrade::check(out, &args, &env.board()?)
+            } else {
+                upgrade::install(out, &args)
+            }
+            .map(|()| Exit::Ok)
+        }
         Command::Release { action } => release(out, action),
     }
 }

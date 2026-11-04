@@ -12,6 +12,7 @@ use rustix::system::{RebootCommand, reboot};
 
 use super::console_log;
 use super::runtime::Exit;
+use super::upgrade;
 use super::watchdog::Watchdog;
 use crate::mounts::{parse_mountinfo, shutdown_order};
 
@@ -95,10 +96,18 @@ fn quiesce_mounts() {
 }
 
 /// Never returns: reboots or powers off the machine.
-pub(super) fn finish(exit: Exit, watchdog: Option<Watchdog>) -> ! {
+pub(super) fn finish(exit: &Exit, watchdog: Option<Watchdog>) -> ! {
     // Services were stopped by the runtime; this catches whatever they or anyone else left
     // behind, so nothing holds a file open on the filesystems about to be unmounted.
     terminate_all();
+    if let Exit::Upgrade(job) = exit {
+        // Writing takes a while and the event loop is gone: keep the hardware timer fed.
+        if let Some(w) = &watchdog {
+            w.handle().keep_alive();
+        }
+        // Success or not, the next step is the reboot; the console says what happened.
+        upgrade::run(job);
+    }
     rustix::fs::sync();
     quiesce_mounts();
     rustix::fs::sync();
@@ -108,7 +117,7 @@ pub(super) fn finish(exit: Exit, watchdog: Option<Watchdog>) -> ! {
     }
     let cmd = match exit {
         Exit::PowerOff => RebootCommand::PowerOff,
-        Exit::Reboot | Exit::Quit => RebootCommand::Restart,
+        Exit::Reboot | Exit::Upgrade(_) | Exit::Quit => RebootCommand::Restart,
     };
     if let Err(e) = reboot(cmd) {
         console_log(format_args!("reboot failed: {e}"));

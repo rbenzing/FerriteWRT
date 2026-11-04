@@ -14,6 +14,80 @@ use crate::version::Version;
 /// Upper bounds for the two small files; a real `SHA256SUMS` is well under 1 KiB.
 const MAX_SUMS: u64 = 64 * 1024;
 const MAX_SIG: u64 = 4 * 1024;
+/// Upper bound for a staged image. The reference board's image is about 30 MiB; staging
+/// happens in RAM (tmpfs), so this also bounds memory use.
+pub const MAX_IMAGE: u64 = 256 * 1024 * 1024;
+/// Most sysupgrade images a staged bundle may contain (a release has one per board).
+const MAX_IMAGES: usize = 4;
+const IMAGE_SUFFIX: &str = "-sysupgrade.bin";
+
+fn copy_capped(src: &Path, dst: &Path, cap: u64) -> Result<(), BundleError> {
+    let name = src
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let err = |msg: String| BundleError::Read {
+        file: name.clone(),
+        msg,
+    };
+    let md = fs::symlink_metadata(src).map_err(|e| err(e.to_string()))?;
+    if !md.is_file() {
+        return Err(err("not a regular file".into()));
+    }
+    let mut from = File::open(src)
+        .map_err(|e| err(e.to_string()))?
+        .take(cap.saturating_add(1));
+    let mut to = File::create(dst).map_err(|e| err(e.to_string()))?;
+    let n = io::copy(&mut from, &mut to).map_err(|e| err(e.to_string()))?;
+    if n > cap {
+        return Err(err(format!("larger than {cap} bytes")));
+    }
+    to.sync_all().map_err(|e| err(e.to_string()))
+}
+
+/// Copy a bundle from `src` (a directory the caller does not control) into a fresh `dst`
+/// that only the caller can write (mode 0700 on unix), so nothing can change the files
+/// between [`verify`] and the write. Copies `SHA256SUMS`, its signature and every
+/// `*-sysupgrade.bin` (at most a few, each at most [`MAX_IMAGE`] bytes); `dst` is replaced.
+pub fn stage(src: &Path, dst: &Path) -> Result<(), BundleError> {
+    let err = |msg: String| BundleError::Read {
+        file: dst.display().to_string(),
+        msg,
+    };
+    match fs::remove_dir_all(dst) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(err(e.to_string())),
+    }
+    #[cfg(unix)]
+    let builder = {
+        let mut b = fs::DirBuilder::new();
+        std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+        b
+    };
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
+    builder.create(dst).map_err(|e| err(e.to_string()))?;
+
+    copy_capped(&src.join(SUMS_FILE), &dst.join(SUMS_FILE), MAX_SUMS)?;
+    copy_capped(&src.join(SIG_FILE), &dst.join(SIG_FILE), MAX_SIG)?;
+    let listing = fs::read_dir(src).map_err(|e| BundleError::Read {
+        file: src.display().to_string(),
+        msg: e.to_string(),
+    })?;
+    let mut images = 0usize;
+    for entry in listing.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|n| n.ends_with(IMAGE_SUFFIX)) else {
+            continue;
+        };
+        images = images.saturating_add(1);
+        if images > MAX_IMAGES {
+            return Err(BundleError::Sums("too many sysupgrade images".into()));
+        }
+        copy_capped(&entry.path(), &dst.join(name), MAX_IMAGE)?;
+    }
+    Ok(())
+}
 
 /// What the running router is.
 #[derive(Debug, Clone, Copy)]
@@ -307,6 +381,45 @@ pub(crate) mod tests {
         assert!(matches!(
             run(dir.path(), "0.2.1", false),
             Err(BundleError::Read { file, .. }) if file == SIG_FILE
+        ));
+    }
+
+    #[test]
+    fn staged_copy_verifies_and_ignores_unrelated_files() {
+        let src = tempfile::tempdir().unwrap();
+        release(src.path(), &[(NAME, &good_image()), ("notes.txt", b"x")]);
+        let dst = tempfile::tempdir().unwrap();
+        let staged = dst.path().join("upgrade");
+        fs::create_dir(&staged).unwrap();
+        fs::write(staged.join("leftover"), b"old").unwrap();
+        stage(src.path(), &staged).unwrap();
+        let mut names: Vec<String> = fs::read_dir(&staged)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [SUMS_FILE, SIG_FILE, NAME],
+            "replaced, only bundle files"
+        );
+        assert!(run(&staged, "0.2.1", false).is_ok());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = fs::metadata(&staged).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+    }
+
+    #[test]
+    fn staging_requires_sums_and_signature() {
+        let src = tempfile::tempdir().unwrap();
+        fs::write(src.path().join(NAME), good_image()).unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            stage(src.path(), &dst.path().join("u")),
+            Err(BundleError::Read { file, .. }) if file == SUMS_FILE
         ));
     }
 

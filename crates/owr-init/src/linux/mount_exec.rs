@@ -52,7 +52,7 @@ const DEVICE_WAIT_STEP: Duration = Duration::from_millis(100);
 /// Resolve `PARTLABEL=x` through sysfs (`/sys/class/block/*/uevent`), or pass a path through.
 /// `disk` is the board's storage device (`/dev/mmcblk0`); when known, only its partitions match.
 /// A label carried by several devices is an error (retrying cannot fix it), not a guess.
-fn resolve_device(source: &str, disk: Option<&str>) -> Result<String, StepError> {
+pub(super) fn resolve_device(source: &str, disk: Option<&str>) -> Result<String, StepError> {
     let SourceSpec::PartLabel(label) = parse_source(source) else {
         return Ok(source.to_owned());
     };

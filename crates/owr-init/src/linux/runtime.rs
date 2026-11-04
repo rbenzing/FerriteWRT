@@ -20,6 +20,7 @@ use tracing::Level;
 
 use super::clock::boot_ms;
 use super::spawn::spawn_service;
+use super::upgrade::{self, UpgradeJob};
 use super::watchdog::WatchdogHandle;
 use super::{control_sock, kmsg, uevent_sock};
 use crate::boot::{BootTracker, FailsafeReason, Progress, factory_reset_target};
@@ -76,10 +77,12 @@ pub(super) enum Msg {
 }
 
 /// What to do once the loop ends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Exit {
     Reboot,
     PowerOff,
+    /// Write a verified image (see [`super::upgrade`]), then reboot.
+    Upgrade(Box<UpgradeJob>),
     /// Test mode: just exit the process.
     Quit,
 }
@@ -264,8 +267,8 @@ pub(super) async fn run(cfg: RuntimeConfig) -> Exit {
         let sleep = rt.sleep_duration();
         let exit = tokio::select! {
             () = recv(&mut sigchld) => { rt.reap(); None }
-            () = recv(&mut sigterm) => Some(term_exit),
-            () = recv(&mut sigint) => Some(term_exit),
+            () = recv(&mut sigterm) => Some(term_exit.clone()),
+            () = recv(&mut sigint) => Some(term_exit.clone()),
             () = recv(&mut sigusr1) => Some(Exit::Reboot),
             () = recv(&mut sigusr2) => Some(Exit::PowerOff),
             Some(msg) = rx.recv() => rt.handle_msg(msg),
@@ -485,7 +488,7 @@ impl Runtime {
         match msg {
             Msg::Control { req, reply } => {
                 let (text, exit) = self.handle_request(req);
-                let written = exit.map(|_| {
+                let written = exit.as_ref().map(|_| {
                     // The connection reports back once the reply is out, so the exit below
                     // cannot overtake it (see `await_reply_written`).
                     let (tx, rx) = oneshot::channel();
@@ -545,6 +548,24 @@ impl Runtime {
             },
             Request::Reboot => (ok_response(), Some(Exit::Reboot)),
             Request::Poweroff => (ok_response(), Some(Exit::PowerOff)),
+            Request::Upgrade(req) => match upgrade::prepare(
+                &req,
+                self.cfg.board.as_ref(),
+                self.cfg.mode,
+                self.cfg.persistent,
+            ) {
+                Ok(job) => {
+                    tracing::warn!(
+                        "upgrade to {} verified: stopping services to write it",
+                        job.version
+                    );
+                    (ok_response(), Some(Exit::Upgrade(Box::new(job))))
+                }
+                Err(e) => {
+                    tracing::error!("upgrade refused: {e}");
+                    (error_response(&e), None)
+                }
+            },
             // Served directly by the connection handler; never forwarded.
             Request::Journal { .. } => (error_response("unsupported"), None),
         }

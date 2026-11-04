@@ -341,5 +341,5 @@ pub(super) fn run() -> ExitCode {
     };
     let exit = rt.block_on(runtime::run(cfg));
     drop(rt);
-    shutdown::finish(exit, watchdog)
+    shutdown::finish(&exit, watchdog)
 }

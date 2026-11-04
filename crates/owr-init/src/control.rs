@@ -8,6 +8,9 @@
 //! reload <name>\n             -> same (SIGHUP)
 //! journal <since_seq> <limit>\n -> newline-delimited JSON entries
 //! reboot\n | poweroff\n       -> {"ok":true}, then the system goes down
+//! upgrade <dir> [downgrade] [wipe]\n
+//!                             -> {"ok":true} once the bundle in <dir> is verified, then
+//!                                services stop, the image is written and the system reboots
 //! ```
 //!
 //! This is how `owr-api` talks to init (there is no ubus).
@@ -21,6 +24,11 @@ use crate::service::ServiceStatus;
 
 /// Longest accepted request line, newline included.
 pub const MAX_LINE: usize = 256;
+/// How long an `upgrade` request may take to answer: staging and verifying the bundle hash
+/// the whole image (seconds on the router). Well under the watchdog's stall limit.
+pub const UPGRADE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+/// Longest `upgrade` directory path.
+pub const MAX_UPGRADE_DIR: usize = 200;
 /// Error text for a `restart` / `reload` of a service init does not know (clients match it).
 pub const ERR_UNKNOWN_SERVICE: &str = "unknown service";
 /// Concurrent control connections; further ones are dropped immediately.
@@ -68,6 +76,46 @@ pub enum Request {
     Journal { since: u64, limit: usize },
     Reboot,
     Poweroff,
+    Upgrade(UpgradeRequest),
+}
+
+/// `upgrade <dir> [downgrade] [wipe]`: install the release bundle in `dir` (the three files
+/// `owr-upgrade` verifies).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeRequest {
+    pub dir: String,
+    /// Accept a version older than the running one.
+    pub allow_downgrade: bool,
+    /// Factory reset on the first boot of the new image instead of keeping the settings.
+    pub wipe_settings: bool,
+}
+
+/// An absolute path of plain characters, no `..`: it travels on the one-line protocol, so
+/// nothing in it may look like a separator or a second word.
+pub fn valid_upgrade_dir(dir: &str) -> bool {
+    dir.starts_with('/')
+        && dir.len() <= MAX_UPGRADE_DIR
+        && dir
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-'))
+        && !dir.split('/').any(|c| c == "..")
+}
+
+impl UpgradeRequest {
+    /// The request line, or `None` if `dir` is not a [`valid_upgrade_dir`].
+    pub fn line(&self) -> Option<String> {
+        valid_upgrade_dir(&self.dir).then(|| {
+            let mut line = format!("upgrade {}", self.dir);
+            if self.allow_downgrade {
+                line.push_str(" downgrade");
+            }
+            if self.wipe_settings {
+                line.push_str(" wipe");
+            }
+            line.push('\n');
+            line
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -145,6 +193,28 @@ pub fn parse_request(line: &[u8]) -> Result<Request, RequestError> {
                 limit: limit.min(MAX_JOURNAL_LIMIT),
             })
         }
+        "upgrade" => {
+            let dir = words.next().ok_or(RequestError::MissingArg("upgrade"))?;
+            if !valid_upgrade_dir(dir) {
+                return Err(RequestError::BadArg("upgrade"));
+            }
+            let mut req = UpgradeRequest {
+                dir: dir.to_owned(),
+                allow_downgrade: false,
+                wipe_settings: false,
+            };
+            for word in words {
+                let flag = match word {
+                    "downgrade" => &mut req.allow_downgrade,
+                    "wipe" => &mut req.wipe_settings,
+                    _ => return Err(RequestError::BadArg("upgrade")),
+                };
+                if std::mem::replace(flag, true) {
+                    return Err(RequestError::BadArg("upgrade"));
+                }
+            }
+            Ok(Request::Upgrade(req))
+        }
         other => Err(RequestError::Unknown(other.chars().take(32).collect())),
     }
 }
@@ -208,6 +278,48 @@ pub fn error_response(message: &str) -> String {
 mod tests {
     use super::*;
     use crate::journal::{Journal, Source};
+
+    #[test]
+    fn parses_upgrade_and_round_trips_the_line() {
+        let req = UpgradeRequest {
+            dir: "/tmp/ferritewrt-upgrade".into(),
+            allow_downgrade: true,
+            wipe_settings: true,
+        };
+        let line = req.line().unwrap();
+        assert_eq!(line, "upgrade /tmp/ferritewrt-upgrade downgrade wipe\n");
+        assert_eq!(parse_request(line.as_bytes()), Ok(Request::Upgrade(req)));
+        assert_eq!(
+            parse_request(b"upgrade /tmp/u wipe\n"),
+            Ok(Request::Upgrade(UpgradeRequest {
+                dir: "/tmp/u".into(),
+                allow_downgrade: false,
+                wipe_settings: true,
+            }))
+        );
+        for bad in [
+            "upgrade",
+            "upgrade tmp/relative",
+            "upgrade /tmp/../etc",
+            "upgrade /tmp/a\tb",
+            "upgrade /tmp/u wipe wipe",
+            "upgrade /tmp/u force",
+        ] {
+            assert!(parse_request(bad.as_bytes()).is_err(), "{bad:?}");
+        }
+        let long = format!("/{}", "a".repeat(MAX_UPGRADE_DIR));
+        assert!(!valid_upgrade_dir(&long));
+        assert_eq!(
+            UpgradeRequest {
+                dir: "/tmp/x y".into(),
+                allow_downgrade: false,
+                wipe_settings: false
+            }
+            .line(),
+            None,
+            "a space would split the request"
+        );
+    }
 
     #[test]
     fn parses_all_commands() {

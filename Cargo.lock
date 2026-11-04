@@ -1269,6 +1269,7 @@ version = "0.2.1"
 dependencies = [
  "owr-board",
  "owr-common",
+ "owr-upgrade",
  "rustix",
  "serde",
  "serde_json",

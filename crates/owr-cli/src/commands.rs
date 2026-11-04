@@ -67,7 +67,7 @@ impl Env {
         }
     }
 
-    fn board(&self) -> Result<Board, CliError> {
+    pub(crate) fn board(&self) -> Result<Board, CliError> {
         self.board_or(None)
     }
 

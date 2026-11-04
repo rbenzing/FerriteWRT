@@ -3,7 +3,7 @@
 //! * `init`: PID 1 boot sequence (mounts, failsafe decision, pivot, hostname).
 //! * `runtime`: the event loop (signals, reaping, supervision, control socket, shutdown).
 //! * Helpers: `mount_exec`, `spawn`, `kmsg`, `uevent_sock`, `buttons`, `control_sock`,
-//!   `watchdog`, `shutdown`.
+//!   `watchdog`, `shutdown`, `upgrade`.
 //!
 //! `--test-mode <dir>` runs only the event loop as an ordinary process.
 
@@ -18,6 +18,7 @@ mod runtime;
 mod shutdown;
 mod spawn;
 mod uevent_sock;
+mod upgrade;
 mod watchdog;
 
 use std::io::{self, Write as _};

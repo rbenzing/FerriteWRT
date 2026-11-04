@@ -281,7 +281,10 @@ fn init_error(e: &ClientError) -> BackendError {
     match e {
         ClientError::BadName | ClientError::UnknownService => BackendError::NotFound,
         ClientError::Io(_) | ClientError::Refused(_) => BackendError::Unavailable(e.to_string()),
-        ClientError::TooLarge | ClientError::Malformed(_) => BackendError::Internal(e.to_string()),
+        // The API chooses the upgrade directory itself; a bad one is a bug here.
+        ClientError::TooLarge | ClientError::Malformed(_) | ClientError::BadUpgradeDir => {
+            BackendError::Internal(e.to_string())
+        }
     }
 }
 

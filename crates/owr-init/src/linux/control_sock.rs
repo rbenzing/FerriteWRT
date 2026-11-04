@@ -16,7 +16,7 @@ use tokio::time::timeout;
 use super::runtime::{Msg, Reply};
 use crate::control::{
     JournalBudget, MAX_CONNECTIONS, MAX_JOURNAL_CONNECTIONS, MAX_LINE, Request, RequestError,
-    error_response, journal_line, parse_request,
+    UPGRADE_DEADLINE, error_response, journal_line, parse_request,
 };
 use crate::journal::{SharedJournal, lock};
 
@@ -88,11 +88,17 @@ async fn read_line(stream: &mut UnixStream) -> Result<Vec<u8>, RequestError> {
 
 /// Ask the event loop to handle `req`.
 async fn forward(req: Request, tx: &mpsc::Sender<Msg>) -> Reply {
+    // Verifying an upgrade bundle hashes the whole image before init can answer.
+    let deadline = if matches!(req, Request::Upgrade(_)) {
+        UPGRADE_DEADLINE
+    } else {
+        IO_TIMEOUT
+    };
     let (reply, rx) = oneshot::channel();
     if tx.send(Msg::Control { req, reply }).await.is_err() {
         return Reply::text(error_response("init is shutting down"));
     }
-    match timeout(IO_TIMEOUT, rx).await {
+    match timeout(deadline, rx).await {
         Ok(Ok(reply)) => reply,
         _ => Reply::text(error_response("no answer from init")),
     }
