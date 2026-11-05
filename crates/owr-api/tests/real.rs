@@ -227,6 +227,7 @@ fn changed_outcome() -> ApplyOutcome {
         hostapd_changed: vec![("phy0".into(), true), ("phy1".into(), false)],
         dnsmasq_changed: true,
         netd_changed: false,
+        pppoe_changed: false,
         warnings: vec!["sysctl x not available, skipped".into()],
     }
 }
@@ -738,9 +739,11 @@ async fn unsupported_configs_are_rejected_before_saving() {
     let f = fixture();
     let before = f.file();
     let mut doc = f.backend.config().await.unwrap();
-    // PPPoE passes the config checks but cannot be mapped to plans yet
-    doc["network"]["wan"]["proto"] =
-        json!({"type": "pppoe", "username": "isp", "password": "secret-pw"});
+    // A static lease named like a dnsmasq keyword passes the config checks but cannot be
+    // rendered into dnsmasq.conf.
+    doc["dhcp"]["static_leases"] = json!([
+        {"mac": "02:00:00:00:00:01", "ip": "192.168.8.20", "hostname": "infinite"}
+    ]);
     let err = f.backend.save_config(doc, "tester").await.unwrap_err();
     assert!(matches!(err, BackendError::Invalid(_)), "{err:?}");
     assert_eq!(f.file(), before);

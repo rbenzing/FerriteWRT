@@ -10,10 +10,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use ipnet::Ipv4Net;
-use owr_config::{Config, DhcpPool};
+use owr_common::paths::PPP_RESOLV;
+use owr_config::{Config, DhcpPool, WanProto};
 
 use crate::error::MapError;
 use crate::files::RESOLV_AUTO;
+use crate::pppoe::PPPOE_IFNAME;
 use crate::topology::{LAN_BRIDGE, Topology};
 
 /// Reject values that could smuggle extra directives into a daemon config: only ASCII
@@ -164,8 +166,11 @@ pub(crate) fn render_dnsmasq(
         "bogus-priv".to_owned(),
         "localise-queries".to_owned(),
     ];
+    let pppoe = matches!(cfg.network.wan.proto, WanProto::Pppoe { .. });
     if d.dns_servers.is_empty() {
-        l.push(format!("resolv-file={}", run_path(run_dir, RESOLV_AUTO)));
+        // A PPPoE WAN learns its DNS servers from pppd (usepeerdns), not from a lease.
+        let upstream = if pppoe { PPP_RESOLV } else { RESOLV_AUTO };
+        l.push(format!("resolv-file={}", run_path(run_dir, upstream)));
     } else {
         l.push("no-resolv".to_owned());
         l.extend(d.dns_servers.iter().map(|s: &IpAddr| format!("server={s}")));
@@ -187,6 +192,9 @@ pub(crate) fn render_dnsmasq(
     l.extend(topo.vlans.iter().map(|v| format!("interface={}", v.bridge)));
     l.push("bind-dynamic".to_owned());
     l.push(format!("except-interface={}", topo.wan_dev));
+    if pppoe {
+        l.push(format!("except-interface={PPPOE_IFNAME}"));
+    }
     l.push("dhcp-authoritative".to_owned());
 
     for p in &pools {

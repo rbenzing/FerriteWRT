@@ -1,12 +1,13 @@
 //! `Config` -> [`Ruleset`].
 
-use owr_config::{Action, ApiBind, Config, Direction, ForwardProto, RuleProto, WanInput};
+use owr_config::{Action, ApiBind, Config, Direction, ForwardProto, RuleProto, WanInput, WanProto};
 use owr_fw::{
     Family, Forwarding, Policy, PortRange, Proto, Redirect, Rule, Ruleset, Zone, ZoneName,
     flint2_default,
 };
 
 use crate::error::MapError;
+use crate::pppoe::PPPOE_IFNAME;
 use crate::topology::{LAN_BRIDGE, Topology};
 
 fn zone(name: &str) -> Result<ZoneName, MapError> {
@@ -103,6 +104,13 @@ pub(crate) fn build_fw(cfg: &Config, topo: &Topology<'_>) -> Result<Ruleset, Map
             WanInput::Drop => Policy::Drop,
             WanInput::Reject => Policy::Reject,
         };
+        // On PPPoE all WAN IP traffic is on pppd's interface (input, NAT, MSS clamp, port
+        // forwards). The port stays in the zone: it carries only PPPoE frames, but anything
+        // else arriving on it is still WAN. The flowtable keeps the port, which is where
+        // the kernel offloads PPPoE flows.
+        if matches!(cfg.network.wan.proto, WanProto::Pppoe { .. }) {
+            z.interfaces.insert(0, PPPOE_IFNAME.to_owned());
+        }
     }
 
     for vlan in &topo.vlans {

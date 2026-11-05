@@ -29,7 +29,7 @@ use owr_common::{Outcome, paths};
 use owr_config::{Config, ConfigError, Role as CfgRole, Secret, Store, User};
 use owr_init::client::{ClientError, InitClient};
 use owr_init::control::UpgradeRequest;
-use owr_init::services::NETD_SERVICE;
+use owr_init::services::{NETD_SERVICE, PPPOE_SERVICE};
 use owr_net::Observed;
 use owr_upgrade::bundle::{self, Expect};
 use owr_upgrade::release::parse_pubkey;
@@ -400,6 +400,9 @@ fn summarize(config_label: Option<&str>, outcome: &ApplyOutcome) -> Vec<String> 
     if outcome.netd_changed {
         summary.push("network daemon (DHCP client, router advertisements) updated".to_owned());
     }
+    if outcome.pppoe_changed {
+        summary.push("PPPoE connection settings updated".to_owned());
+    }
     summary
 }
 
@@ -417,6 +420,9 @@ fn daemons_to_restart(outcome: &ApplyOutcome) -> Vec<String> {
     }
     if outcome.netd_changed {
         names.push(NETD_SERVICE.to_owned());
+    }
+    if outcome.pppoe_changed {
+        names.push(PPPOE_SERVICE.to_owned());
     }
     names
 }
@@ -1020,6 +1026,7 @@ mod tests {
             hostapd_changed: vec![("phy0".into(), true), ("phy1".into(), false)],
             dnsmasq_changed: true,
             netd_changed: false,
+            pppoe_changed: false,
             warnings: Vec::new(),
         }
     }
@@ -1048,11 +1055,12 @@ mod tests {
         assert_eq!(daemons_to_restart(&outcome()), ["hostapd-phy0", "dnsmasq"]);
         let all = ApplyOutcome {
             netd_changed: true,
+            pppoe_changed: true,
             ..outcome()
         };
         assert_eq!(
             daemons_to_restart(&all),
-            ["hostapd-phy0", "dnsmasq", "owr-netd"]
+            ["hostapd-phy0", "dnsmasq", "owr-netd", "pppoe-wan"]
         );
         assert_eq!(
             daemons_to_restart(&ApplyOutcome::default()),

@@ -531,7 +531,7 @@ impl Runtime {
                 );
                 (text, None)
             }
-            Request::Restart(name) => match self.manager.restart(&name, now) {
+            Request::Restart(name) => match self.manager.restart(&name, now, &exists) {
                 Some(ds) => {
                     self.exec(ds, now);
                     (ok_response(), None)

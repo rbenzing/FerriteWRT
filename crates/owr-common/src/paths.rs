@@ -12,6 +12,12 @@ pub const RELEASE_KEY_FILE: &str = "/usr/share/ferritewrt/release.pub";
 pub const CONFIG_FILE: &str = "/etc/ferritewrt/config.toml";
 /// Runtime state (tmpfs): rendered daemon configs, sockets, pid files.
 pub const RUN_DIR: &str = "/run/ferritewrt";
+/// pppd options of a `PPPoE` WAN, inside [`RUN_DIR`] (0600: it holds the password). Written
+/// by owr-apply; its presence is what makes owr-init start pppd.
+pub const PPPOE_CONF: &str = "pppoe-wan.conf";
+/// The ISP's DNS servers as pppd writes them, inside [`RUN_DIR`]. pppd's path is fixed at
+/// `/etc/ppp/resolv.conf`; the image build makes that a symlink to this file.
+pub const PPP_RESOLV: &str = "resolv.conf.ppp";
 /// Persistent TLS material for the management API.
 pub const TLS_DIR: &str = "/etc/ferritewrt/tls";
 /// Append-only audit log of mutating management actions.

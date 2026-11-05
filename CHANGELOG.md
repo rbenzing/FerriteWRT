@@ -12,6 +12,22 @@ All notable changes to FerriteWRT are recorded here. The format follows
   `build/nft-check/` are loaded with `nft -f` in a throw-away network namespace, the board's
   ports as dummy links for the flowtable. A negative control must be rejected first, since
   `nft -c` alone accepts rulesets the kernel refuses at commit. All rulesets load.
+- PPPoE WAN (`network.wan.proto.type = "pppoe"`), which the web UI already offered but
+  apply refused. `owr-apply` writes pppd's options to `/run/ferritewrt/pppoe-wan.conf`
+  (0600) and removes them when the WAN is no longer PPPoE; owr-init runs pppd (service
+  `pppoe-wan`) while that file exists, confined like dnsmasq and hostapd (`NET_ADMIN`,
+  `NET_RAW`, `/dev/ppp`). The firewall's WAN zone covers `pppoe-wan` (NAT, MSS clamp, port
+  forwards); the ISP's DNS servers reach dnsmasq through `/etc/ppp/resolv.conf`, which the
+  image links into the run directory. `wan.mtu` is pppd's (default 1492); above 1492 the
+  WAN port grows to carry it (RFC 4638). `owr-apply render --what pppoe` /
+  `owr render pppoe` show the options with the password hidden. IPv4 only.
+
+### Fixed
+- `restart` of a service whose config file was removed (a radio or PPPoE switched off)
+  started it anyway, and it failed in a loop; init now only stops it and starts it again
+  once the file exists.
+- The daemon sandbox never allowed `ioctl` on the devices a profile names (Landlock
+  handles device ioctls from ABI 5); they are allowed now, which pppd's `/dev/ppp` needs.
 
 ## [0.3.0-rc.1] - 2026-11-04
 

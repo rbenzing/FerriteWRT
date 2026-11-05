@@ -30,13 +30,17 @@ Done in v0.3.0-rc.1 (pre-release), untested on hardware:
   /64) and the WAN DHCPv4 client, which until then no process started. No DHCPv6 server:
   RDNSS covers DNS for current Windows, macOS, iOS, Android and Linux clients.
 
+Done on `main` since v0.3.0-rc.1, untested on hardware:
+- PPPoE WAN: `owr-apply` renders pppd's options (0600) and the firewall's WAN zone covers
+  `pppoe-wan`; owr-init runs pppd confined (`pppoe-wan`), the ISP's DNS servers reach
+  dnsmasq through `/etc/ppp/resolv.conf`. IPv4 only.
+
 Open:
 - WAN IPv6: a DHCPv6 client with prefix delegation (replaces the unused `odhcp6c`), global
   /64s on the LAN bridges, the router as IPv6 default gateway, forward rules for IPv6.
 - Confine `owr-api`, `owr-apply` and `owr-netd` (they need network administration and
   config writes; best done with a separate uid and narrower socket permissions).
 - Replace dnsmasq with a Rust DHCPv4 server + forwarding resolver (`owr-dns`, hickory-based).
-- Render PPPoE WAN (modelled in the config, not rendered).
 - Position-independent Rust binaries: rustc does not link static-PIE for
   `aarch64-unknown-linux-musl`, so build them inside the image build as dynamic PIEs against
   the image's musl (see STATUS.md).

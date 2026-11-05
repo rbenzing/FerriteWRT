@@ -18,6 +18,7 @@ therefore stages the overlay in `build/out/rootfs/` and rsyncs it to `<openwrt>/
 | `/sbin/owr-init`, `/sbin/owr-api`, `/sbin/owr-apply`, `/sbin/owr` | `cargo xbuild` (aarch64-unknown-linux-musl, static; not PIE, see `docs/STATUS.md`) | mode 0755; `REQUIRED_BINS` in `build-image.sh`, checked again in the finished rootfs. owr-init starts them from these paths (a test keeps the two lists in step). |
 | `/sbin/init` | symlink to `owr-init`, created by the script | Replaces procd's `/sbin/init`. `cp -f` is expected to replace the old file; the build verifies the result and fails if `/sbin/init` is not this symlink. |
 | `/etc/ferritewrt/board.toml` | `boards/<board>.toml` | copied by the script so the descriptor has one source of truth |
+| `/etc/ppp/resolv.conf` | symlink to `/run/ferritewrt/resolv.conf.ppp`, created by the script | pppd writes the ISP's DNS servers to this fixed path; dnsmasq reads the target. Replaces the ppp package's link and is checked in the finished rootfs. |
 | `/usr/share/ferritewrt/release.pub` | `keys/release.pub` | release signing public key; upgrades verify against it. Outside `/etc/ferritewrt` on purpose: settings survive an upgrade, the key comes from the new image |
 | everything else in this directory | this directory | rsynced as is; `README.md` and `.gitkeep` are skipped |
 

@@ -70,6 +70,8 @@ enum What {
     Dnsmasq,
     /// Network daemon plan as JSON (DHCP client, router advertisements)
     Netd,
+    /// pppd options of a `PPPoE` WAN, password redacted
+    Pppoe,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -239,6 +241,10 @@ fn render(what: What, board: &Board, cfg: &Config) -> Result<(), CliError> {
         }
         What::Dnsmasq => print!("{}", plans.dnsmasq_conf),
         What::Netd => println!("{}", serde_json::to_string_pretty(&plans.netd)?),
+        What::Pppoe => match &plans.pppoe {
+            Some(p) => print!("{}", owr_apply::pppoe::render_pppoe(p, false)),
+            None => println!("# the WAN is not PPPoE: pppd does not run"),
+        },
     }
     Ok(())
 }

@@ -41,7 +41,8 @@ a failing test fails the script).
   the LAN is ULA only (`network.lan.ipv6 = ula`): hosts get an address and the router as
   DNS server but no IPv6 default route, because there is no WAN IPv6 yet (DHCPv6-PD,
   phase 2).
-- PPPoE WAN is modelled in the config but not rendered (phase 2).
+- PPPoE WAN has not run against an ISP: pppd with the options `owr-apply` renders, its
+  sandbox profile, the ISP's DNS servers reaching dnsmasq. IPv6 over PPPoE is not set up.
 
 ## Do not boot the v0.2.0 initramfs image
 
@@ -76,7 +77,8 @@ Procedure details (U-Boot variables, addresses) are in [BUILD.md](BUILD.md).
    `/run/ferritewrt/lease-eth1.json` holds the lease, and `/run/ferritewrt/netd.json`
    shows what it runs. With `network.lan.ipv6 = ula`, a LAN client should get an `fd..`
    address and the router's `fd..::1` as DNS server.
-   From v0.3.0 dnsmasq and hostapd run confined (`owr-init --sandbox`). If one of
+   From v0.3.0 dnsmasq and hostapd (and pppd on a PPPoE WAN) run confined
+   (`owr-init --sandbox`). If one of
    them keeps restarting, its journal (`owr` UI logs, or the console) names the refused
    step or file; `touch /etc/ferritewrt/sandbox.off` and restart it to confirm the sandbox
    is the cause, and report the message so the profile can be fixed.

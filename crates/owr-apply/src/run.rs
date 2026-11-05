@@ -67,6 +67,10 @@ impl Default for Paths {
 
 /// What [`apply_all`] changed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent per-daemon \"files changed\" flags, not a state"
+)]
 pub struct ApplyOutcome {
     /// Network actions the planner asked for (0 when already converged).
     pub net_actions: usize,
@@ -75,6 +79,8 @@ pub struct ApplyOutcome {
     pub hostapd_changed: Vec<(String, bool)>,
     pub dnsmasq_changed: bool,
     pub netd_changed: bool,
+    /// pppd's options changed or were removed (restart `pppoe-wan`).
+    pub pppoe_changed: bool,
     /// Non-fatal problems (hostname, absent sysctls, failed-but-tolerated actions).
     pub warnings: Vec<String>,
 }
@@ -330,6 +336,7 @@ async fn execute(
                 out.hostapd_changed = files.hostapd_changed;
                 out.dnsmasq_changed = files.dnsmasq_changed;
                 out.netd_changed = files.netd_changed;
+                out.pppoe_changed = files.pppoe_changed;
                 result?;
             }
         }

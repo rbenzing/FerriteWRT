@@ -242,6 +242,11 @@ pub(crate) fn render(
         What::Dnsmasq if json => return text_only("dnsmasq"),
         What::Dnsmasq => write!(out, "{}", plans.dnsmasq_conf)?,
         What::Netd => writeln!(out, "{}", serde_json::to_string_pretty(&plans.netd)?)?,
+        What::Pppoe if json => return text_only("pppoe"),
+        What::Pppoe => match &plans.pppoe {
+            Some(p) => write!(out, "{}", owr_apply::pppoe::render_pppoe(p, reveal_secrets))?,
+            None => writeln!(out, "# the WAN is not PPPoE: pppd does not run")?,
+        },
         What::Wifi if json => {
             let radios = if reveal_secrets {
                 plans.radios

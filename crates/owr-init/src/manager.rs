@@ -166,13 +166,25 @@ impl Manager {
         Some(tag(name, cmds).collect())
     }
 
-    /// Stop then start a service immediately (bypasses dependency gating).
-    pub fn restart(&mut self, name: &str, now: Instant) -> Option<Vec<Directive>> {
+    /// Stop then start a service immediately (bypasses dependency gating). A service whose
+    /// condition path no longer exists (its config was removed) is only stopped and left
+    /// pending: [`Manager::poll`] starts it again once the path exists.
+    pub fn restart(
+        &mut self,
+        name: &str,
+        now: Instant,
+        exists: &dyn Fn(&Path) -> bool,
+    ) -> Option<Vec<Directive>> {
         let mut out = self.deliver(name, Event::StopRequested, now)?;
-        out.extend(
-            self.deliver(name, Event::StartRequested, now)
-                .unwrap_or_default(),
-        );
+        let slot = self.slot_mut(name)?;
+        if Self::condition_ok(slot, exists) {
+            out.extend(
+                self.deliver(name, Event::StartRequested, now)
+                    .unwrap_or_default(),
+            );
+        } else {
+            slot.pending = true;
+        }
         Some(out)
     }
 
@@ -550,7 +562,7 @@ mod tests {
                 signal: Signal::Hup
             }
         );
-        let ds = m.restart("a", t0).unwrap();
+        let ds = m.restart("a", t0, &always).unwrap();
         assert!(ds.iter().any(|d| d.command
             == Command::Kill {
                 pid: 7,
@@ -558,8 +570,41 @@ mod tests {
             }));
         let ds = m.on_exit(7, ExitStatus::Code(0), t0);
         assert_eq!(spawned(&ds), ["a"]);
-        assert!(m.restart("nope", t0).is_none());
+        assert!(m.restart("nope", t0, &always).is_none());
         assert!(m.reload("nope").is_none());
+    }
+
+    #[test]
+    fn restart_of_a_service_whose_config_is_gone_only_stops_it() {
+        let t0 = Instant::now();
+        let mut s = spec("ppp", &[]);
+        s.condition_path_exists = Some("/run/ferritewrt/pppoe-wan.conf".into());
+        let mut m = Manager::new(vec![s]).unwrap();
+        m.start_all();
+        m.poll(t0, &always);
+        run(&mut m, "ppp", 9, t0);
+
+        let gone = |_: &Path| false;
+        let ds = m.restart("ppp", t0, &gone).unwrap();
+        assert!(ds.iter().any(|d| d.command
+            == Command::Kill {
+                pid: 9,
+                signal: Signal::Term
+            }));
+        let ds = m.on_exit(9, ExitStatus::Code(0), t0);
+        assert_eq!(
+            spawned(&ds),
+            Vec::<&str>::new(),
+            "not started without its config"
+        );
+        assert_eq!(spawned(&m.poll(t0, &gone)), Vec::<&str>::new());
+        assert!(
+            m.settled(&gone),
+            "a skipped service does not hold up the boot"
+        );
+
+        // The config comes back (PPPoE switched on again): the next poll starts it.
+        assert_eq!(spawned(&m.poll(t0, &always)), ["ppp"]);
     }
 
     #[test]

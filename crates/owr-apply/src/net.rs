@@ -10,6 +10,7 @@ use owr_net::model::TABLE_MAIN;
 use owr_net::{AddrSpec, DhcpClientSpec, LinkSpec, MacAddr, NetPlan, RouteProto, RouteSpec};
 
 use crate::error::MapError;
+use crate::pppoe;
 use crate::topology::{LAN_BRIDGE, Topology};
 
 /// Prefix length of every ULA subnet handed to a bridge.
@@ -112,10 +113,17 @@ pub(crate) fn build_net(
         ..NetPlan::default()
     };
 
+    // On PPPoE the configured MTU is pppd's; the port only grows when the PPP frames do
+    // not fit its default 1500.
+    let wan_port_mtu = match net.wan.proto {
+        WanProto::Pppoe { .. } => pppoe::port_mtu(net.wan.mtu.unwrap_or(pppoe::DEFAULT_MTU)),
+        WanProto::Dhcp { .. } | WanProto::Static { .. } => net.wan.mtu,
+    };
+
     // Every board port, so DSA user ports are up even when unused.
     for port in &board.ethernet.ports {
         plan.links.push(if port.netdev == topo.wan_dev {
-            physical(&port.netdev, net.wan.mtu, net.wan.mac_override)
+            physical(&port.netdev, wan_port_mtu, net.wan.mac_override)
         } else {
             physical(&port.netdev, None, None)
         });
@@ -201,7 +209,9 @@ pub(crate) fn build_net(
                 proto: RouteProto::Static,
             });
         }
-        WanProto::Pppoe { .. } => return Err(MapError::Unsupported("pppoe")),
+        // pppd configures its own interface (address, default route); the port only
+        // carries the PPPoE frames and gets no address.
+        WanProto::Pppoe { .. } => {}
     }
     if net.wan.ipv6 == WanIpv6::Dhcpv6 {
         tracing::warn!("network.wan.ipv6 = dhcpv6 is not implemented yet and is ignored");

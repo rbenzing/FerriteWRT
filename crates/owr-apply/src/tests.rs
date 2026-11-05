@@ -236,18 +236,74 @@ fn wan_static_maps_address_and_default_route() {
     assert_eq!(route.proto, RouteProto::Static);
 }
 
-#[test]
-fn pppoe_is_unsupported() {
+fn pppoe_cfg() -> c::Config {
     let mut cfg = defaults();
     cfg.network.wan.proto = c::WanProto::Pppoe {
-        username: "user".to_owned(),
+        username: "user@isp".to_owned(),
         password: "hunter2hunter2".into(),
         service: None,
     };
+    cfg.validate_against(&board()).unwrap();
+    cfg
+}
+
+#[test]
+fn pppoe_wan_runs_pppd_on_the_port_and_puts_its_interface_in_the_wan_zone() {
+    let p = plans(&pppoe_cfg());
+    let ppp = p.pppoe.as_ref().unwrap();
     assert_eq!(
-        build_plans(&board(), &cfg).unwrap_err(),
-        MapError::Unsupported("pppoe")
+        (ppp.nic.as_str(), ppp.username.as_str(), ppp.mtu),
+        ("eth1", "user@isp", 1492)
     );
+    // pppd owns the address and the default route: nothing for the planner on the port.
+    assert_eq!(p.net.dhcp_clients, Vec::new());
+    assert_eq!(p.netd.dhcp, None);
+    assert!(!p.net.addresses.iter().any(|a| a.link == "eth1"));
+    assert_eq!(p.net.routes, Vec::new());
+    assert!(matches!(
+        link(&p, "eth1"),
+        LinkSpec::Physical {
+            mtu: None,
+            up: true,
+            ..
+        }
+    ));
+
+    let wan = p.fw.zones.iter().find(|z| z.name == zone("wan")).unwrap();
+    assert_eq!(wan.interfaces, ["pppoe-wan", "eth1"]);
+    let nft = f::render(&p.fw).unwrap();
+    assert!(
+        nft.contains(r#"oifname { "eth1", "pppoe-wan" } masquerade"#),
+        "{nft}"
+    );
+    assert!(nft.contains(r#"oifname { "eth1", "pppoe-wan" } tcp flags syn tcp option maxseg"#));
+
+    let dns = conf_lines(&p.dnsmasq_conf);
+    assert!(dns.contains(&"resolv-file=/run/ferritewrt/resolv.conf.ppp"));
+    assert!(dns.contains(&"except-interface=pppoe-wan"));
+    assert!(dns.contains(&"except-interface=eth1"));
+
+    assert_eq!(plans(&defaults()).pppoe, None, "only a PPPoE WAN runs pppd");
+}
+
+#[test]
+fn pppoe_mtu_is_pppds_and_grows_the_port_only_for_larger_frames() {
+    let mut cfg = pppoe_cfg();
+    cfg.network.wan.mtu = Some(1500);
+    let p = plans(&cfg);
+    assert_eq!(p.pppoe.as_ref().map(|x| x.mtu), Some(1500));
+    assert!(matches!(
+        link(&p, "eth1"),
+        LinkSpec::Physical {
+            mtu: Some(1508),
+            ..
+        }
+    ));
+    cfg.network.wan.mtu = Some(1480);
+    assert!(matches!(
+        link(&plans(&cfg), "eth1"),
+        LinkSpec::Physical { mtu: None, .. }
+    ));
 }
 
 #[test]
@@ -1072,6 +1128,51 @@ mod files {
         let second = write_daemon_files(&p, &cfg, dir.path()).unwrap();
         assert!(!second.dnsmasq_changed && !second.netd_changed);
         assert_eq!(second.hostapd_changed, [("phy1".to_owned(), false)]);
+    }
+
+    #[test]
+    fn pppoe_options_are_private_and_removed_when_the_wan_is_no_longer_pppoe() {
+        use owr_common::paths::{PPP_RESOLV, PPPOE_CONF};
+        let cfg = pppoe_cfg();
+        let dir = tempfile::tempdir().unwrap();
+        let conf = dir.path().join(PPPOE_CONF);
+        let resolv = dir.path().join(PPP_RESOLV);
+
+        let first = write_daemon_files(&plans(&cfg), &cfg, dir.path()).unwrap();
+        assert!(first.pppoe_changed);
+        let text = std::fs::read_to_string(&conf).unwrap();
+        assert!(
+            text.lines().any(|l| l == "password \"hunter2hunter2\""),
+            "{text}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&conf).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        assert_eq!(
+            std::fs::read_to_string(&resolv).unwrap(),
+            "",
+            "created for dnsmasq"
+        );
+
+        // pppd wrote the ISP's servers: a later apply keeps them and changes nothing.
+        std::fs::write(&resolv, "nameserver 192.0.2.53\n").unwrap();
+        let again = write_daemon_files(&plans(&cfg), &cfg, dir.path()).unwrap();
+        assert!(!again.pppoe_changed);
+        assert_eq!(
+            std::fs::read_to_string(&resolv).unwrap(),
+            "nameserver 192.0.2.53\n"
+        );
+
+        // Back to DHCP: the options go (so init no longer starts pppd), reported once.
+        let dhcp = defaults();
+        let back = write_daemon_files(&plans(&dhcp), &dhcp, dir.path()).unwrap();
+        assert!(back.pppoe_changed);
+        assert!(!conf.exists());
+        let still = write_daemon_files(&plans(&dhcp), &dhcp, dir.path()).unwrap();
+        assert!(!still.pppoe_changed);
     }
 
     #[test]

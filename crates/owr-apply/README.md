@@ -7,7 +7,7 @@ the network daemon (`netd`: WAN DHCPv4 client, IPv6 router advertisements).
 
 ```
 owr-apply boot|apply [--board P] [--config P]   # Linux; prints the JSON ApplyOutcome
-owr-apply render --what net|fw|wifi|dnsmasq|netd [--board P] [--config P]   # any OS
+owr-apply render --what net|fw|wifi|dnsmasq|netd|pppoe [--board P] [--config P]   # any OS
 owr-apply check [--board P] [--config P]        # validate_against(board) + mapping
 owr-apply --log info netd [--board P] [--config P]   # Linux; runs until SIGTERM (service owr-netd)
 ```
@@ -65,6 +65,8 @@ dnsmasq runs as its compiled-in default user, which the image must contain; `con
 | file | daemon | on change |
 |---|---|---|
 | `hostapd-<phy>.conf` (0600) | hostapd per radio | restart that radio's hostapd |
+| `pppoe-wan.conf` (0600, PPPoE WAN only) | pppd | restart `pppoe-wan`; removed when the WAN is no longer PPPoE, which stops pppd |
+| `resolv.conf.ppp` | written by pppd (`/etc/ppp/resolv.conf` links here), created empty first | none, dnsmasq re-reads it |
 | `dnsmasq.conf` | dnsmasq | restart dnsmasq |
 | `netd.json` | `owr-apply netd` (a view: the daemon derives the same plan from the config) | restart `owr-netd` |
 | `resolv.conf.auto` | dnsmasq `resolv-file` | none, dnsmasq re-reads it |
@@ -123,6 +125,6 @@ broadcast) to `resolv.conf.auto`; a lease without any keeps the previous file (w
 - **netd and apply race**: a lease converge in `netd` and an `apply` from the API can overlap.
   `netd` reloads the config for every lease event, and the API restarts `owr-netd` when
   `netd.json` changes, so both converge toward the saved config.
-- **PPPoE**: `MapError::Unsupported("pppoe")` (phase 2). `wan.ipv6 = dhcpv6` is ignored (warning).
+- **PPPoE** is IPv4 only; `wan.ipv6 = dhcpv6` is ignored (warning) on every WAN protocol.
 - Hostapd configs of radios removed from the config stay in `/run` until reboot; the supervisor
   starts only the radios listed in `hostapd_changed`.

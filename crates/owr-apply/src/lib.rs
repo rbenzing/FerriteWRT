@@ -15,6 +15,7 @@ mod dnsmasq;
 mod error;
 mod fw;
 mod net;
+pub mod pppoe;
 mod topology;
 mod wifi;
 
@@ -38,6 +39,7 @@ use owr_config::Config;
 pub use dnsmasq::resolv_conf;
 pub use error::MapError;
 pub use netd::NetdPlan;
+pub use pppoe::PppoePlan;
 pub use wifi::redact_radios;
 
 /// Everything derived from `(Board, Config)`.
@@ -50,6 +52,8 @@ pub struct Plans {
     pub dnsmasq_conf: String,
     /// What the network daemon runs (WAN `DHCPv4` client, router advertisements).
     pub netd: NetdPlan,
+    /// pppd's options when the WAN is `PPPoE`.
+    pub pppoe: Option<PppoePlan>,
     pub hostname: String,
     /// Same list as `net.sysctls`, kept for callers that only need the kernel knobs.
     pub sysctl: Vec<(String, String)>,
@@ -100,6 +104,7 @@ pub fn build_plans_with(board: &Board, cfg: &Config, inputs: &Inputs) -> Result<
     let radios = wifi::build_radios(board, cfg)?;
     let dnsmasq_conf = dnsmasq::render_dnsmasq(cfg, &topo, &run_dir)?;
     let netd = netd::build_netd(&net, topo.wan_dev);
+    let pppoe = pppoe::build_pppoe(cfg, topo.wan_dev)?;
 
     net.validate()?;
     fw.validate().map_err(MapError::Fw)?;
@@ -116,6 +121,7 @@ pub fn build_plans_with(board: &Board, cfg: &Config, inputs: &Inputs) -> Result<
         radios,
         dnsmasq_conf,
         netd,
+        pppoe,
         hostname: cfg.system.hostname.clone(),
         wan_dev: topo.wan_dev.to_owned(),
         warnings,

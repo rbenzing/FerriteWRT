@@ -27,6 +27,8 @@ RUST_TARGET=""                    # from [soc] arch of the board file, below
 # Installed to /sbin; the build fails if one is missing. Paths must match owr-init's
 # services (owr_init::services::{APPLY_BIN, API_BIN}).
 REQUIRED_BINS=(owr-init owr-api owr-apply owr)
+# Where /etc/ppp/resolv.conf points: owr_common::paths::{RUN_DIR, PPP_RESOLV}.
+PPP_RESOLV_TARGET=/run/ferritewrt/resolv.conf.ppp
 
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -214,6 +216,10 @@ stage_rootfs() {
   install -d -m 0755 "$stage/sbin" "$stage/etc/ferritewrt"
   for b in "$OUT_DIR"/bin/*; do install -m 0755 "$b" "$stage/sbin/$(basename "$b")"; done
   ln -sfn owr-init "$stage/sbin/init"
+  # pppd writes the ISP's DNS servers to the fixed path /etc/ppp/resolv.conf; send them to
+  # the run directory, where dnsmasq reads them (owr_common::paths::PPP_RESOLV).
+  install -d -m 0755 "$stage/etc/ppp"
+  ln -sfn "$PPP_RESOLV_TARGET" "$stage/etc/ppp/resolv.conf"
   install -m 0644 "$BOARD_TOML" "$stage/etc/ferritewrt/board.toml"
   # Upgrades verify against this key (owr_common::paths::RELEASE_KEY_FILE).
   grep -Eqx '[0-9a-f]{64}' "$REPO_ROOT/keys/release.pub" \
@@ -333,7 +339,9 @@ verify_rootfs() {
   [ -f "$root/etc/ferritewrt/board.toml" ] || die "$root/etc/ferritewrt/board.toml missing"
   cmp -s "$root/usr/share/ferritewrt/release.pub" "$REPO_ROOT/keys/release.pub" \
     || die "$root/usr/share/ferritewrt/release.pub missing or not keys/release.pub"
-  log "rootfs check: /sbin/init -> owr-init, ${REQUIRED_BINS[*]} in /sbin, board.toml and release.pub present"
+  [ "$(readlink "$root/etc/ppp/resolv.conf" || true)" = "$PPP_RESOLV_TARGET" ] \
+    || die "$root/etc/ppp/resolv.conf is not a symlink to $PPP_RESOLV_TARGET (found: $(ls -l "$root/etc/ppp/resolv.conf" 2>&1)); PPPoE DNS would not reach dnsmasq"
+  log "rootfs check: /sbin/init -> owr-init, ${REQUIRED_BINS[*]} in /sbin, board.toml, release.pub and the pppd DNS link present"
 }
 
 # --- (g)(h) collect and summarise ------------------------------------------------

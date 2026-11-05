@@ -20,6 +20,7 @@ Adding a router is described in [PORTING.md](PORTING.md).
 | Firewall | firewall4 + ucode templates | **owr-fw** (typed ruleset -> nft text); `nft` CLI kept to load it | pure-Rust nf_tables is phase 3 |
 | Wi-Fi | wifi-scripts + hostapd | **owr-wifi** renders hostapd.conf; hostapd (C) kept and supervised | hostapd rewrite is out of scope |
 | DHCPv4/DNS | dnsmasq | kept, config rendered by Rust; owr-dns (phase 2) | |
+| PPPoE WAN | netifd ppp proto + pppd | pppd (C) kept, options rendered by **owr-apply**, supervised and confined by owr-init | IPv4 only |
 | IPv6 RA/DHCPv6 | odhcpd | **owr-apply netd** (router advertisements: SLAAC prefix + RDNSS; no DHCPv6 server), also runs the WAN DHCPv4 client of **owr-net** | DHCPv6-PD client for WAN IPv6 is phase 2 |
 | Web UI + API | uhttpd + LuCI (Lua/JS) + rpcd ACLs | **owr-api** (axum, rustls, argon2id, RBAC, CSRF) + embedded static UI | |
 | Logging | logd/ubox | owr-init journal (bounded ring buffer + persistent) | |

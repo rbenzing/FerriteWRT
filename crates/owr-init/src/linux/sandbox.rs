@@ -161,6 +161,9 @@ fn landlock_rules(p: &Profile) -> Vec<(PathBuf, BitFlags<AccessFs>)> {
     let read_exec = AccessFs::from_read(abi);
     let read = AccessFs::ReadFile | AccessFs::ReadDir;
     let file_rw = AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::Truncate;
+    // A device a profile names is used through ioctls too (pppd and /dev/ppp); every
+    // other device stays without them (`IoctlDev` is a handled right from ABI 5).
+    let device = file_rw | AccessFs::IoctlDev;
     let tree_write = read | AccessFs::WriteFile | AccessFs::Truncate;
     let own = read
         | AccessFs::WriteFile
@@ -181,7 +184,7 @@ fn landlock_rules(p: &Profile) -> Vec<(PathBuf, BitFlags<AccessFs>)> {
         (owned(&p.write_files), file_rw),
         (owned(&p.write_trees), tree_write),
         (owned(&p.own_dirs), own),
-        (owned(&p.devices), file_rw),
+        (owned(&p.devices), device),
     ];
     let mut rules: Vec<(PathBuf, BitFlags<AccessFs>)> = groups
         .into_iter()

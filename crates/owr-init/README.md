@@ -21,7 +21,8 @@ on EIO): use `linux::console_log`; clippy denies `print_stderr`/`print_stdout`.
    `kmodloader` (oneshot, 60 s limit, failure ignored) -> uevent coldplug -> `owr-apply boot`
    (oneshot, 120 s limit, failure logged at error level and visible as `failures` in `status`, but
    never blocking) -> dnsmasq, `owr-netd` (`owr-apply netd`: WAN DHCP client, IPv6 router
-   advertisements), hostapd per radio (`dropbear -F -R` if
+   advertisements), `pppoe-wan` (pppd, only while `/run/ferritewrt/pppoe-wan.conf` exists),
+   hostapd per radio (`dropbear -F -R` if
    `/etc/ferritewrt/ssh.enabled` exists). `owr-api` depends on `kmodloader` only, so the management
    UI is reachable even when apply fails. Services whose rendered config is missing are skipped.
 
@@ -79,7 +80,7 @@ is what `owr-api` and `owr status` use: one connection per call, 2 s timeouts, r
 validated with the same rule as init (`ClientError::{BadName, UnknownService, Refused, ..}`).
 
 ## Sandboxed daemons
-dnsmasq and `hostapd-phy<N>` carry `ServiceSpec::sandbox` (profiles in
+dnsmasq, `pppoe-wan` (pppd) and `hostapd-phy<N>` carry `ServiceSpec::sandbox` (profiles in
 `src/sandbox.rs`). The supervisor creates the files a profile writes (empty, 0644) and the
 directories it owns (0700), then starts `owr-init --sandbox <profile> -- <exec>`. The launcher
 (`src/linux/sandbox.rs`) drops every capability outside the profile from the bounding set,

@@ -4,7 +4,7 @@
 //! `ssh.enabled` exist, which radios does the board have) and gets a list of
 //! [`ServiceSpec`]s back. Binaries need not exist on the host running the tests.
 
-use owr_common::paths::{CONFIG_DIR, RUN_DIR};
+use owr_common::paths::{CONFIG_DIR, PPPOE_CONF, RUN_DIR};
 use serde::Deserialize;
 
 use crate::sandbox::profile_for;
@@ -20,6 +20,10 @@ pub const API_BIN: &str = "/sbin/owr-api";
 /// Service of the network daemon (`owr-apply netd`: WAN DHCP client, IPv6 router
 /// advertisements). Runs unconfined, like `owr-apply`: it converges the network.
 pub const NETD_SERVICE: &str = "owr-netd";
+/// Service of pppd on a `PPPoE` WAN; started only while its options file exists.
+pub const PPPOE_SERVICE: &str = "pppoe-wan";
+/// pppd from the image's ppp package, with the `pppoe.so` plugin.
+pub const PPPD_BIN: &str = "/usr/sbin/pppd";
 /// Longest `owr-apply boot` may run before it is terminated.
 pub const APPLY_TIMEOUT_MS: u64 = 120_000;
 /// Kernel module loader, executed directly (no shell).
@@ -118,11 +122,17 @@ pub fn build_services(ctx: &ServiceContext) -> Vec<ServiceSpec> {
     let mut api = daemon("owr-api", &[API_BIN]);
     api.depends_on = vec!["kmodloader".to_owned()];
 
+    // pppd for a PPPoE WAN: owr-apply writes its options only when the WAN is PPPoE.
+    let pppoe_conf = format!("{RUN_DIR}/{PPPOE_CONF}");
+    let mut pppoe = daemon(PPPOE_SERVICE, &[PPPD_BIN, "file", &pppoe_conf]);
+    pppoe.condition_path_exists = Some(pppoe_conf.into());
+
     let mut out = vec![
         kmodloader(),
         apply,
         dnsmasq,
         daemon(NETD_SERVICE, &[APPLY_BIN, "--log", "info", "netd"]),
+        pppoe,
         api,
     ];
     for phy in &ctx.radio_phys {
@@ -178,15 +188,36 @@ mod tests {
         specs.iter().map(|s| s.name.as_str()).collect()
     }
 
-    /// Every program of this project that init starts (directly or through the sandbox launcher) is
-    /// one the image build installs to `/sbin` (`REQUIRED_BINS` in `build/build-image.sh`).
-    /// Skipped when the repository is not visible (a cross-built test binary on another OS);
-    /// the host run covers it.
-    #[test]
-    fn every_program_init_starts_is_installed_by_the_image_build() {
+    /// `build/build-image.sh`, or `None` when the repository is not visible (a cross-built
+    /// test binary on another OS); the host run covers those tests.
+    fn image_build_script() -> Option<String> {
         let script =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/build-image.sh");
-        let Ok(script) = std::fs::read_to_string(script) else {
+        std::fs::read_to_string(script).ok()
+    }
+
+    /// pppd's fixed DNS path is linked by the image build to the file dnsmasq reads and the
+    /// pppd sandbox may write.
+    #[test]
+    fn the_image_links_pppds_dns_file_into_the_run_directory() {
+        let Some(script) = image_build_script() else {
+            return;
+        };
+        let target = script
+            .lines()
+            .find_map(|l| l.strip_prefix("PPP_RESOLV_TARGET="))
+            .unwrap();
+        assert_eq!(
+            target,
+            format!("{RUN_DIR}/{}", owr_common::paths::PPP_RESOLV)
+        );
+    }
+
+    /// Every program of this project that init starts (directly or through the sandbox launcher) is
+    /// one the image build installs to `/sbin` (`REQUIRED_BINS` in `build/build-image.sh`).
+    #[test]
+    fn every_program_init_starts_is_installed_by_the_image_build() {
+        let Some(script) = image_build_script() else {
             return;
         };
         let installed: Vec<String> = script
@@ -228,7 +259,7 @@ mod tests {
         };
         assert_eq!(
             confined(&ctx()),
-            ["dnsmasq", "hostapd-phy0", "hostapd-phy1"]
+            ["dnsmasq", "pppoe-wan", "hostapd-phy0", "hostapd-phy1"]
         );
         let off = ServiceContext {
             sandbox: false,
@@ -258,6 +289,7 @@ mod tests {
                 "owr-apply",
                 "dnsmasq",
                 "owr-netd",
+                "pppoe-wan",
                 "owr-api",
                 "hostapd-phy0",
                 "hostapd-phy1"
@@ -278,6 +310,18 @@ mod tests {
         assert!(!netd.oneshot, "the network daemon runs until stopped");
         let api = specs.iter().find(|s| s.name == "owr-api").unwrap();
         assert_eq!(api.exec, ["/sbin/owr-api"]);
+        let ppp = specs.iter().find(|s| s.name == PPPOE_SERVICE).unwrap();
+        assert_eq!(
+            ppp.exec,
+            ["/usr/sbin/pppd", "file", "/run/ferritewrt/pppoe-wan.conf"]
+        );
+        assert_eq!(
+            ppp.condition_path_exists
+                .as_deref()
+                .and_then(|p| p.to_str()),
+            Some("/run/ferritewrt/pppoe-wan.conf"),
+            "pppd runs only on a PPPoE WAN"
+        );
         for s in &specs[2..] {
             assert_eq!(s.restart, RestartPolicy::Always, "{}", s.name);
             let dep = if s.name == "owr-api" {

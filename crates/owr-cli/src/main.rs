@@ -195,6 +195,7 @@ pub(crate) enum What {
     Wifi,
     Dnsmasq,
     Netd,
+    Pppoe,
     Sysctl,
 }
 

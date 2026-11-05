@@ -5,18 +5,23 @@
 //! | `hostapd-<phy>.conf` | hostapd | 0600 (passphrases; written by `owr-wifi`) |
 //! | `dnsmasq.conf` | dnsmasq | 0644 |
 //! | `netd.json` | `owr-apply netd` (read-only view; a change restarts the daemon) | 0644 |
+//! | `pppoe-wan.conf` | pppd, only on a `PPPoE` WAN (removed otherwise) | 0600 (password) |
+//! | `resolv.conf.ppp` | written by pppd (created empty here); dnsmasq `resolv-file` on `PPPoE` | 0644 |
 //! | `resolv.conf.auto` | dnsmasq `resolv-file` | 0644 |
 
 use std::io;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
+use owr_common::paths::{PPP_RESOLV, PPPOE_CONF};
 use owr_common::{AtomicWriteError, Outcome, atomic_write};
 use owr_config::{Config, WanProto};
 use serde::Serialize;
+use zeroize::Zeroizing;
 
 use crate::dnsmasq::resolv_conf;
-use crate::{NetdPlan, Plans};
+use crate::pppoe::render_pppoe;
+use crate::{NetdPlan, Plans, PppoePlan};
 
 /// File name of the dnsmasq configuration inside the run directory.
 pub const DNSMASQ_CONF: &str = "dnsmasq.conf";
@@ -27,6 +32,8 @@ pub const RESOLV_AUTO: &str = "resolv.conf.auto";
 
 /// Mode of daemon configs that contain no secrets.
 const DAEMON_MODE: u32 = 0o644;
+/// Mode of daemon configs that contain a secret.
+const SECRET_MODE: u32 = 0o600;
 
 /// Failure writing a daemon config.
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +53,9 @@ pub struct DaemonFiles {
     pub hostapd_changed: Vec<(String, bool)>,
     pub dnsmasq_changed: bool,
     pub netd_changed: bool,
+    /// pppd's options were written with new content or removed (the WAN is no longer
+    /// `PPPoE`); either way pppd must be restarted, which stops it when the file is gone.
+    pub pppoe_changed: bool,
 }
 
 /// Write one daemon config file; `true` when its content changed.
@@ -62,6 +72,30 @@ pub fn netd_json(plan: &NetdPlan) -> Result<String, FilesError> {
     })?;
     text.push('\n');
     Ok(text)
+}
+
+/// pppd's options for a `PPPoE` WAN (0600: the password), or no file at all for any other
+/// WAN, which is what keeps owr-init from starting pppd. Also makes sure pppd's DNS file
+/// exists before dnsmasq starts, so its sandbox can grant reading it; pppd overwrites it
+/// in place when the link comes up. `true` when the options file changed or was removed.
+fn write_pppoe(plan: Option<&PppoePlan>, run_dir: &Path) -> Result<bool, FilesError> {
+    let conf = run_dir.join(PPPOE_CONF);
+    let Some(plan) = plan else {
+        return match std::fs::remove_file(&conf) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(FilesError::Io {
+                context: format!("removing {}", conf.display()),
+                source,
+            }),
+        };
+    };
+    let resolv = run_dir.join(PPP_RESOLV);
+    if !resolv.exists() {
+        atomic_write(&resolv, b"", DAEMON_MODE)?;
+    }
+    let text = Zeroizing::new(render_pppoe(plan, true));
+    Ok(atomic_write(&conf, text.as_bytes(), SECRET_MODE)? == Outcome::Written)
 }
 
 /// Write `<run_dir>/resolv.conf.auto` for `dns`; `true` when its content changed.
@@ -106,6 +140,7 @@ pub fn write_daemon_files_partial(
     }
     out.dnsmasq_changed = write_text(run_dir, DNSMASQ_CONF, &plans.dnsmasq_conf)?;
     out.netd_changed = write_text(run_dir, NETD_PLAN, &netd_json(&plans.netd)?)?;
+    out.pppoe_changed = write_pppoe(plans.pppoe.as_ref(), run_dir)?;
     match &cfg.network.wan.proto {
         WanProto::Static { dns, .. } => {
             write_resolv(run_dir, dns)?;

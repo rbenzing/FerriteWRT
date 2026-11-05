@@ -19,7 +19,9 @@
 //! not from a trace on the router. `/etc/ferritewrt/sandbox.off` turns them off (reboot or
 //! restart the service), which is the way out if one turns out too tight.
 
-use owr_common::paths::{CONFIG_DIR, RUN_DIR};
+use owr_common::paths::{CONFIG_DIR, PPP_RESOLV, PPPOE_CONF, RUN_DIR};
+
+use crate::services::PPPOE_SERVICE;
 
 /// The launcher: `owr-init` itself.
 pub const LAUNCHER: &str = "/sbin/owr-init";
@@ -93,22 +95,46 @@ fn strings(items: &[&str]) -> Vec<String> {
 
 /// The profile for a service name, `None` if the service runs unconfined.
 pub fn profile_for(service: &str) -> Option<Profile> {
-    if service == "dnsmasq" {
-        return Some(Profile {
-            name: service.to_owned(),
-            keep_caps: vec![
-                Cap::NetBindService,
-                Cap::NetAdmin,
-                Cap::NetRaw,
-                Cap::SetUid,
-                Cap::SetGid,
-            ],
-            read_files: vec![run("dnsmasq.conf"), run("resolv.conf.auto")],
-            write_files: vec![run("dhcp.leases"), run("dnsmasq.pid")],
-            write_trees: Vec::new(),
-            own_dirs: Vec::new(),
-            devices: Vec::new(),
-        });
+    match service {
+        "dnsmasq" => {
+            return Some(Profile {
+                name: service.to_owned(),
+                keep_caps: vec![
+                    Cap::NetBindService,
+                    Cap::NetAdmin,
+                    Cap::NetRaw,
+                    Cap::SetUid,
+                    Cap::SetGid,
+                ],
+                // resolv.conf.ppp: the ISP's DNS servers on a PPPoE WAN (owr-apply creates
+                // it before dnsmasq starts, so the rule has a file to attach to).
+                read_files: vec![
+                    run("dnsmasq.conf"),
+                    run("resolv.conf.auto"),
+                    run(PPP_RESOLV),
+                ],
+                write_files: vec![run("dhcp.leases"), run("dnsmasq.pid")],
+                write_trees: Vec::new(),
+                own_dirs: Vec::new(),
+                devices: Vec::new(),
+            });
+        }
+        // pppd speaks LCP, PAP/CHAP and IPCP with the ISP, so it is confined like the
+        // other C daemons. It reads its options and /etc/ppp, drives /dev/ppp through
+        // ioctls, sets its address and default route (NET_ADMIN) and opens the PPPoE
+        // socket (NET_RAW); the only file it writes is the ISP's DNS list.
+        PPPOE_SERVICE => {
+            return Some(Profile {
+                name: service.to_owned(),
+                keep_caps: vec![Cap::NetAdmin, Cap::NetRaw],
+                read_files: vec![run(PPPOE_CONF)],
+                write_files: vec![run(PPP_RESOLV)],
+                write_trees: Vec::new(),
+                own_dirs: Vec::new(),
+                devices: strings(&["/dev/ppp"]),
+            });
+        }
+        _ => {}
     }
     let phy = service.strip_prefix("hostapd-phy")?;
     if phy.is_empty() || !phy.bytes().all(|b| b.is_ascii_digit()) {
