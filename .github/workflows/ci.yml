@@ -159,4 +159,5 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables
       - run: cargo build --locked -p owr-apply
       - name: render every fixture and check it with nft -c (network namespace)
-        run: sudo scripts/check-nft.sh target/debug/owr-apply
+        # sudo clears the environment; the script needs GITHUB_ACTIONS to emit annotations.
+        run: sudo GITHUB_ACTIONS=true scripts/check-nft.sh target/debug/owr-apply
