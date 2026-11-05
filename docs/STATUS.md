@@ -9,7 +9,7 @@ touching a router.
 |---|---|
 | Board descriptor (`boards/glinet_gl-mt6000.toml`) | Parsed + cross-validated by `owr-board` tests; values traced to the OpenWrt DTS and image recipe |
 | Typed config (`owr-config`) | Unit tests incl. proptests; secrets never echoed in parse errors; argon2 params bounded |
-| Firewall renderer (`owr-fw`) | Snapshot tests of the nft ruleset; Linux applier tested with a fake `nft`; name allow-list prevents comment injection |
+| Firewall renderer (`owr-fw`) | Snapshot tests of the nft ruleset; every CI run loads the rendered rulesets (board defaults plus `build/nft-check/*.toml`: VLANs, port forwards, every custom-rule kind, static WAN, offload on and off) into a real kernel with `nft -f` in a throw-away network namespace (`scripts/check-nft.sh`), after a negative control proves the kernel rejects a bad ruleset; Linux applier tested with a fake `nft`; name allow-list prevents comment injection |
 | Wi-Fi renderer + hostapd control client (`owr-wifi`) | Snapshot tests of hostapd.conf; control-socket client tested on Linux against a fake hostapd |
 | Network planner + DHCPv4 client (`owr-net`) | Planner proven idempotent by an in-memory kernel simulator and proptest; DHCP codec fuzzed; state machine tested with fake transport |
 | PID 1 (`owr-init`) | Host tests on the pure state machines; supervisor smoke-tested in `--test-mode` on Linux (WSL) |
@@ -33,8 +33,9 @@ a failing test fails the script).
 - **Nothing has booted on a Flint 2.** The netlink appliers, the nft loader, mounts,
   pivot_root, the watchdog thread, uevent/evdev readers and LED writes are
   compile-checked and reviewed but have never run against a real kernel.
-- The nft rulesets have not been checked with a real `nft -c`, nor hostapd.conf
-  with a real hostapd.
+- hostapd.conf has not been checked with a real hostapd (it has no dry-run mode). The nft
+  rulesets load in CI, but with Ubuntu's older nft 1.0.x rather than the router's 1.1.7,
+  and without `flags offload` (hardware flowtable offload needs the MT7986).
 - The network daemon (`owr-netd`) has not run on the router: the WAN DHCP lease, the
   router advertisements on `br-lan` and clients taking a ULA address from them. IPv6 on
   the LAN is ULA only (`network.lan.ipv6 = ula`): hosts get an address and the router as

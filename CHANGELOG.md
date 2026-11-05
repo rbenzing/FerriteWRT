@@ -6,6 +6,13 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- CI loads every rendered firewall ruleset into a real kernel (`scripts/check-nft.sh`, job
+  "firewall rulesets load in a real kernel"): the board defaults and the fixtures in
+  `build/nft-check/` are loaded with `nft -f` in a throw-away network namespace, the board's
+  ports as dummy links for the flowtable. A negative control must be rejected first, since
+  `nft -c` alone accepts rulesets the kernel refuses at commit. All rulesets load.
+
 ## [0.3.0-rc.1] - 2026-11-04
 
 ### Added
