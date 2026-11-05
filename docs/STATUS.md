@@ -1,7 +1,26 @@
-# Project status (2026-11-04)
+# Project status (2026-11-05)
 
 Where FerriteWRT stands and what the next hardware session must do. Read this before
 touching a router.
+
+## Resume here
+
+- **Released:** v0.2.1 (latest stable) and **v0.3.0-rc.1** (GitHub pre-release, the image
+  for the first hardware boot: signed upgrades, confined daemons, the Rust network daemon,
+  the `/sbin/owr-api` fix). Its downloads were checked with `owr release verify` and
+  `owr upgrade --check`.
+- **On `main` since rc.1** (see `CHANGELOG.md` `[Unreleased]`): firewall rulesets loaded
+  into a real kernel in CI; PPPoE WAN (pppd options, confined `pppoe-wan` service); init
+  fixes for sandboxed device ioctls and for restarting a service whose config is gone.
+- **Waiting on the owner:** boot the v0.3.0-rc.1 initramfs image on the Flint 2 with the
+  checklist below. If it works, release v0.3.0 (`docs/VERSIONING.md`); anything that
+  fails is fixed and shipped as the next `-rc.N`. Optionally cut an rc.2 first so the
+  boot also covers PPPoE.
+- **Next work without hardware**, in the order proposed: WAN IPv6 (DHCPv6 prefix
+  delegation, which also serves PPPoE); confine `owr-api`, `owr-apply` and `owr-netd`;
+  the rest of the open list in [ROADMAP.md](ROADMAP.md).
+- **Housekeeping:** delete the dead tags `v0.1.0`/`v0.1.1` (no release behind them); add
+  a "do not boot the initramfs image" note to the v0.2.0 release; the follow-ups below.
 
 ## What exists and is verified
 
