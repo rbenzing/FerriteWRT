@@ -1,0 +1,120 @@
+# Firewall fixture for scripts/check-nft.sh: every construct the renderer emits.
+# DHCP WAN, flowtable with hardware offload, an isolated and a trusted VLAN, port
+# forwards of every protocol, and custom rules of every protocol, direction and action.
+schema = 1
+
+[system]
+hostname = "nft-check"
+
+[network.lan]
+ports = ["lan1", "lan2", "lan3"]
+ipv4 = "192.168.8.1/24"
+ipv6 = "ula"
+
+[network.wan]
+port = "wan"
+
+[network.wan.proto]
+type = "dhcp"
+
+[[network.vlans]]
+name = "guest"
+id = 20
+ports = ["lan4"]
+ipv4 = "10.20.0.1/24"
+isolated = true
+
+[network.vlans.dhcp]
+enabled = true
+start = 50
+limit = 100
+lease = "1h"
+
+[[network.vlans]]
+name = "iot"
+id = 30
+ports = ["lan5"]
+ipv4 = "10.30.0.1/24"
+isolated = false
+
+[firewall]
+default_wan_input = "drop"
+hw_offload = true
+
+[[firewall.port_forwards]]
+name = "web"
+proto = "tcp"
+wan_port = "8080"
+dest_ip = "192.168.8.10"
+dest_port = 80
+
+[[firewall.port_forwards]]
+name = "game"
+proto = "udp"
+wan_port = "27015-27016"
+dest_ip = "192.168.8.20"
+dest_port = 27015
+
+[[firewall.port_forwards]]
+name = "voip"
+proto = "tcp_udp"
+wan_port = "5060"
+dest_ip = "10.30.0.5"
+dest_port = 5060
+
+[[firewall.port_forwards]]
+name = "off"
+proto = "tcp"
+wan_port = "9000"
+dest_ip = "192.168.8.30"
+dest_port = 9000
+enabled = false
+
+[[firewall.rules]]
+name = "ssh-from-office"
+direction = "wan_in"
+proto = "tcp"
+src = "203.0.113.0/24"
+dest_port = "22"
+action = "accept"
+
+[[firewall.rules]]
+name = "block-range"
+direction = "wan_in"
+proto = "udp"
+dest_port = "6000-6100"
+action = "drop"
+
+[[firewall.rules]]
+name = "ping-v6-office"
+direction = "wan_in"
+proto = "icmp"
+src = "2001:db8::/32"
+action = "accept"
+
+[[firewall.rules]]
+name = "no-icmp-out"
+direction = "lan_out"
+proto = "icmp"
+action = "reject"
+
+[[firewall.rules]]
+name = "kid-tablet"
+direction = "lan_out"
+proto = "any"
+src = "192.168.8.50/32"
+action = "drop"
+
+[[firewall.rules]]
+name = "smtp-out"
+direction = "lan_out"
+proto = "tcp"
+dest_port = "25"
+action = "reject"
+
+[[firewall.rules]]
+name = "disabled"
+direction = "wan_in"
+proto = "any"
+action = "accept"
+enabled = false

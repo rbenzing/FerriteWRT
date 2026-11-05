@@ -1,0 +1,31 @@
+# Firewall fixture for scripts/check-nft.sh: static WAN, no hardware offload, WAN input
+# rejected instead of dropped, management API on every network.
+schema = 1
+
+[system]
+hostname = "nft-check"
+
+[network.lan]
+ports = ["lan1", "lan2", "lan3", "lan4", "lan5"]
+ipv4 = "10.0.0.1/16"
+
+[network.wan]
+port = "wan"
+mtu = 1492
+
+[network.wan.proto]
+type = "static"
+ipv4 = "198.51.100.2/30"
+gateway = "198.51.100.1"
+dns = ["9.9.9.9", "2620:fe::fe"]
+
+[firewall]
+default_wan_input = "reject"
+hw_offload = false
+
+[[firewall.rules]]
+name = "https-in"
+direction = "wan_in"
+proto = "tcp"
+dest_port = "443"
+action = "accept"
