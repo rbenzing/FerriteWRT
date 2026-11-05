@@ -17,7 +17,7 @@ Current state and the next hardware step are in [STATUS.md](STATUS.md).
 
 ## Phase 2: shrink the C surface, finish upgrade path
 
-Done on `main` (version 0.3.0), untested on hardware:
+Done in v0.3.0-rc.1 (pre-release), untested on hardware:
 - `owr-upgrade` verifies the signed release bundle, init writes kernel and rootfs with
   read-back and keeps `/etc/ferritewrt`; `owr upgrade` and the web UI start it. Single
   slot: the reference board has one kernel and one rootfs partition, so recovery from a

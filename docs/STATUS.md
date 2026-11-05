@@ -21,7 +21,7 @@ touching a router.
 | Network daemon (`owr-apply netd`) | Router advertisements checked byte for byte over a veth pair on Linux (WSL), including the rate-limited answer to a solicitation; shutdown on SIGTERM tested; the DHCP lease hand-off reuses the apply path |
 | Cross-compilation | Every binary builds as a static executable for `aarch64-unknown-linux-musl` with no C toolchain (not PIE, see below) |
 | OpenWrt image build | Runs in the release workflow (Docker); kernel and package config checked line by line; every board's config checked on each push |
-| Releases | v0.2.0 and v0.2.1 published by the release workflow: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations. Use v0.2.1 (see below). `main` is 0.3.0 (upgrades, sandboxes, network daemon), not tagged until the first hardware boot works |
+| Releases | v0.2.0, v0.2.1 and the pre-release v0.3.0-rc.1 published by the release workflow: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations. Boot v0.3.0-rc.1 first (see below); v0.3.0 is tagged once it works |
 | Dependency policy | `cargo deny check` clean: no C/asm crates, permissive licenses, no advisories |
 
 Linux-only code paths are exercised by `scripts/linux-tests.sh` (builds the test
@@ -49,7 +49,9 @@ command line. The GL-MT6000 DTS appends `root=PARTLABEL=rootfs rootwait` to ever
 the initramfs one included, so v0.2.0 would have mounted the router's existing
 `rootfs_data` partition and overlaid it. v0.2.1 decides from the filesystem at `/`
 (tmpfs after OpenWrt's initramfs `/init`, squashfs on a flash boot) and leaves storage
-alone when in doubt. Use v0.2.1 or later.
+alone when in doubt. Use v0.2.1 or later; for the first hardware session use v0.3.0-rc.1:
+in v0.2.1 owr-init starts the management API from `/usr/bin/owr-api`, which the image does
+not contain, so the web UI does not come up.
 
 ## First hardware session (initramfs, nothing is written to flash)
 

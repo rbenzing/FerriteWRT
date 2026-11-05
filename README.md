@@ -182,9 +182,10 @@ The phase 1 control plane is complete, and from phase 2 the firmware upgrades, t
 sandboxes and the Rust network daemon (WAN DHCP client, IPv6 router advertisements) are
 done. Every crate compiles for the router target (`aarch64-unknown-linux-musl`, static, no
 C toolchain required), the pure logic is unit-tested on the host, the Linux paths run as
-root under WSL, and the UI is verified in a browser. The latest published release is
-v0.2.1; `main` is 0.3.0, to be tagged once the first hardware boot works. **Not yet
-flashed to hardware.** The hand-off state and the next hardware session are in
+root under WSL, and the UI is verified in a browser. The latest stable release is
+v0.2.1; v0.3.0-rc.1 is the pre-release for the first hardware boot, and v0.3.0 follows
+once it works. **Not yet flashed to hardware.** The hand-off state and the next hardware
+session are in
 [docs/STATUS.md](docs/STATUS.md); what comes after in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---

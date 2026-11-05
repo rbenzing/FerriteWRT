@@ -6,7 +6,7 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-04
+## [0.3.0-rc.1] - 2026-11-04
 
 ### Added
 - Firmware upgrades from a running router (`crates/owr-upgrade`). A bundle is the release's
