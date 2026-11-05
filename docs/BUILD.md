@@ -49,7 +49,7 @@ the build it came from.
 | `images/build-info.txt` | version, OpenWrt/repo revisions, kernel, rustc, UTC time, and OpenWrt's original file names (`image:` lines) |
 | `images/manifest.json` | schema 1: version, board, git revisions, kernel, build time, every other file with kind, size, sha256 |
 | `images/SHA256SUMS` | `sha256sum` lines for every file above except itself; covers `manifest.json` |
-| `bin/`, `bin-host/owr` | target binaries staged into the rootfs; host `owr` used for `owr release manifest|sums` |
+| `bin/`, `bin-host/owr` | target binaries staged into the rootfs; host `owr` used for `owr release manifest` and `sums` |
 | `build.log`, `resolved.diffconfig` | full `make V=s` log; what OpenWrt really selected |
 
 The build does **not** sign. The release workflow (CI, which holds `OWR_RELEASE_KEY`) runs

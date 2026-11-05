@@ -45,6 +45,8 @@ integrity and performance**, then ease of use.
 - **♻️ Idempotent apply** — observe, plan, apply, verify; re-running an apply never flaps a working link
 - **🌐 Management over HTTPS only** — argon2id passwords, CSRF, admin and viewer roles, audit log, strict CSP
 - **📦 Signed releases and upgrades** — every firmware release ships `SHA256SUMS`, an ed25519 signature and GitHub build-provenance attestations; a running router installs a release only after checking that signature, the board and the version
+- **🧱 Confined network daemons** — the two C daemons that parse network traffic (dnsmasq, hostapd) start under Landlock, seccomp and a reduced capability set, with no access to settings, keys or flash
+- **🌐 IPv6 on the LAN** — when switched on, router advertisements from Rust give every LAN and VLAN bridge a ULA prefix and the router as IPv6 DNS server (internet IPv6 is on the roadmap)
 - **🖥️ Web UI without a framework** — vanilla ES modules, no inline code, verified in Chromium
 - **🔧 Data-driven hardware** — ports, radios, LEDs and buttons come from one `boards/<router>.toml` per device
 
@@ -94,11 +96,13 @@ far you got.
 
 | Layer | FerriteWRT |
 |---|---|
-| Init, service supervision, logging, mounts, watchdog | `owr-init` |
+| Init, service supervision, sandboxing, logging, mounts, watchdog | `owr-init` |
 | Configuration | `owr-config` |
-| Networking, DHCP client | `owr-net` |
+| Networking, DHCP client, IPv6 router advertisements | `owr-net` |
+| Applying the config, network daemon | `owr-apply` |
 | Firewall | `owr-fw` (nftables) |
 | Wi-Fi configuration | `owr-wifi` (drives hostapd) |
+| Firmware upgrades | `owr-upgrade` |
 | Management API, web UI | `owr-api` |
 | Command line | `owr` |
 | Kernel, drivers, bootloader, image packaging | Linux, built per router (see [Supported hardware](#-supported-hardware)) |
@@ -109,11 +113,12 @@ assets/brand/      logo, lockup and favicon sources
 crates/owr-common  atomic writes, well-known paths
 crates/owr-board   board descriptor schema + validation
 crates/owr-config  typed, versioned configuration
-crates/owr-net     declarative network plan + rtnetlink + DHCPv4 client
+crates/owr-net     declarative network plan + rtnetlink + DHCPv4 client + router advertisements
 crates/owr-fw      firewall model -> nftables ruleset
 crates/owr-wifi    Wi-Fi model -> hostapd.conf, hostapd control client
-crates/owr-init    PID 1 supervisor, journal, mounts, watchdog
-crates/owr-apply   apply orchestration
+crates/owr-init    PID 1 supervisor, daemon sandbox, journal, mounts, watchdog
+crates/owr-apply   apply orchestration + the network daemon (owr-netd)
+crates/owr-upgrade signed release bundle verification + firmware write plan
 crates/owr-api     HTTPS API + embedded web UI
 crates/owr-cli     the owr command-line tool and release tooling
 build/             image build: shared + per-router configs, kernel fragments, Dockerfile
@@ -141,7 +146,7 @@ owr release verify <download-dir> --pubkey keys/release.pub
 sha256sum -c SHA256SUMS
 ```
 
-A running router upgrades itself from the same three files (the `-sysupgrade.bin`,
+From v0.3.0, a running router upgrades itself from the same three files (the `-sysupgrade.bin`,
 `SHA256SUMS`, `SHA256SUMS.sig`): upload them under **System** in the web UI, or copy them
 over and run `owr upgrade <dir>`. The router checks the signature against the key it was
 built with, the board and the version before anything is written, and keeps your settings.
@@ -173,11 +178,14 @@ Docker; see [docs/BUILD.md](docs/BUILD.md).
 
 ## 🚦 Status
 
-Phase 1: every crate compiles for the router target (`aarch64-unknown-linux-musl`, static,
-no C toolchain required), the pure logic is unit-tested on the host and the Linux paths
-under WSL, and the UI is verified in a browser. **Not yet flashed to hardware.** The
-hand-off state and the next hardware session are in [docs/STATUS.md](docs/STATUS.md);
-what comes after in [docs/ROADMAP.md](docs/ROADMAP.md).
+The phase 1 control plane is complete, and from phase 2 the firmware upgrades, the daemon
+sandboxes and the Rust network daemon (WAN DHCP client, IPv6 router advertisements) are
+done. Every crate compiles for the router target (`aarch64-unknown-linux-musl`, static, no
+C toolchain required), the pure logic is unit-tested on the host, the Linux paths run as
+root under WSL, and the UI is verified in a browser. The latest published release is
+v0.2.1; `main` is 0.3.0, to be tagged once the first hardware boot works. **Not yet
+flashed to hardware.** The hand-off state and the next hardware session are in
+[docs/STATUS.md](docs/STATUS.md); what comes after in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 

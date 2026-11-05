@@ -39,7 +39,7 @@ bundle failed verification) / 404 / 500; validation details are
 | `POST /services/{name}/{restart\|reload}`, `POST /system/reboot` | admin | |
 | `PUT /users/{name}` `{role,enabled,password?}`, `DELETE /users/{name}` | admin | not self, never the last admin |
 | `GET /system/backup`, `POST /system/restore` | admin | octet-stream; restore body <= 1 MiB, logs everyone out |
-| `PUT /system/upgrade/files/{name}` | admin | raw body streamed to the upload dir; `name` is `SHA256SUMS` (<= 64 KiB), `SHA256SUMS.sig` (<= 4 KiB) or `ferritewrt-*-sysupgrade.bin` (<= 256 MiB), else 400; too large -> 413 and nothing kept; an image replaces older images; `{name,size}` |
+| `PUT /system/upgrade/files/{name}` | admin | raw body streamed to the upload dir; `name` is `SHA256SUMS` (<= 64 KiB), `SHA256SUMS.sig` (<= 4 KiB) or `ferritewrt-*-sysupgrade.bin` (<= 128 MiB), else 400; too large -> 413 and nothing kept; an image replaces older images; `{name,size}` |
 | `DELETE /system/upgrade/files` | admin | removes every upload, `{cleared}` |
 | `POST /system/upgrade/check` `{allow_downgrade?}` | admin | verifies the uploads (signature, hash, image, board, version): `{image,version,board,running,downgrade}`; a bad bundle is 400 with the reason |
 | `POST /system/upgrade` `{allow_downgrade?,wipe_settings?}` | admin | hands the uploads to init (which verifies again, writes the image, reboots): `{upgrading:true}`; init's refusal is 400 with its reason |

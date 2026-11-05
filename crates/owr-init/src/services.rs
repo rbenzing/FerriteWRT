@@ -14,6 +14,9 @@ use crate::service::{RestartPolicy, ServiceSpec};
 pub const CHILD_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 /// Applies the persisted config (network, firewall, wifi, daemon configs) at boot.
 pub const APPLY_BIN: &str = "/sbin/owr-apply";
+/// The management API and web UI. Every binary of this project is installed to `/sbin` by
+/// `build/build-image.sh`.
+pub const API_BIN: &str = "/sbin/owr-api";
 /// Service of the network daemon (`owr-apply netd`: WAN DHCP client, IPv6 router
 /// advertisements). Runs unconfined, like `owr-apply`: it converges the network.
 pub const NETD_SERVICE: &str = "owr-netd";
@@ -112,7 +115,7 @@ pub fn build_services(ctx: &ServiceContext) -> Vec<ServiceSpec> {
 
     // The management UI is how a broken config gets fixed: it needs the drivers (network
     // devices), not the applied config.
-    let mut api = daemon("owr-api", &["/usr/bin/owr-api"]);
+    let mut api = daemon("owr-api", &[API_BIN]);
     api.depends_on = vec!["kmodloader".to_owned()];
 
     let mut out = vec![
@@ -175,6 +178,46 @@ mod tests {
         specs.iter().map(|s| s.name.as_str()).collect()
     }
 
+    /// Every program of this project that init starts (directly or through the sandbox launcher) is
+    /// one the image build installs to `/sbin` (`REQUIRED_BINS` in `build/build-image.sh`).
+    /// Skipped when the repository is not visible (a cross-built test binary on another OS);
+    /// the host run covers it.
+    #[test]
+    fn every_program_init_starts_is_installed_by_the_image_build() {
+        let script =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/build-image.sh");
+        let Ok(script) = std::fs::read_to_string(script) else {
+            return;
+        };
+        let installed: Vec<String> = script
+            .lines()
+            .find_map(|l| l.strip_prefix("REQUIRED_BINS=("))
+            .and_then(|l| l.split(')').next())
+            .unwrap()
+            .split_whitespace()
+            .map(|b| format!("/sbin/{b}"))
+            .collect();
+        let mut with_ssh = ctx();
+        with_ssh.ssh_enabled = true;
+        let mut programs = vec![crate::sandbox::LAUNCHER.to_owned()];
+        programs.extend(
+            build_services(&with_ssh)
+                .into_iter()
+                .map(|s| s.exec[0].clone()),
+        );
+        let ours: Vec<&String> = programs
+            .iter()
+            .filter(|p| p.rsplit('/').next().is_some_and(|n| n.starts_with("owr")))
+            .collect();
+        assert!(ours.len() >= 4, "{ours:?}");
+        for program in ours {
+            assert!(
+                installed.contains(program),
+                "{program} not in {installed:?}"
+            );
+        }
+    }
+
     #[test]
     fn network_daemons_are_confined_unless_disabled() {
         let confined = |c: &ServiceContext| -> Vec<String> {
@@ -233,6 +276,8 @@ mod tests {
         let netd = specs.iter().find(|s| s.name == NETD_SERVICE).unwrap();
         assert_eq!(netd.exec, ["/sbin/owr-apply", "--log", "info", "netd"]);
         assert!(!netd.oneshot, "the network daemon runs until stopped");
+        let api = specs.iter().find(|s| s.name == "owr-api").unwrap();
+        assert_eq!(api.exec, ["/sbin/owr-api"]);
         for s in &specs[2..] {
             assert_eq!(s.restart, RestartPolicy::Always, "{}", s.name);
             let dep = if s.name == "owr-api" {

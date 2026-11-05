@@ -62,8 +62,9 @@ every artifact, which ties the file hashes to the exact workflow run and commit.
 - Signature: `SHA256SUMS.sig` is an ed25519 signature over the exact bytes of
   `SHA256SUMS`, produced by `owr release sign` in the release workflow. The private
   key lives only in the `OWR_RELEASE_KEY` GitHub secret (32-byte seed as hex). The
-  public key is committed at `keys/release.pub` and compiled into the firmware so
-  the router (`owr-upgrade`) refuses unsigned or tampered images.
+  public key is committed at `keys/release.pub` and installed into the image as
+  `/usr/share/ferritewrt/release.pub`, so the router (`owr-upgrade`, from v0.3.0)
+  refuses unsigned or tampered images.
 - Verify a download on any machine:
 
   ```bash
@@ -74,9 +75,11 @@ every artifact, which ties the file hashes to the exact workflow run and commit.
   signature with any ed25519 tool using the key in `keys/release.pub`
   (format in `crates/owr-cli/README.md`).
 
-- Key rotation: generate a new pair with `owr release keygen`, commit the new
-  `keys/release.pub` in a MINOR release signed with the **old** key, then switch the
-  secret. Devices accept either key during that release line.
+- Key rotation: a router verifies an upgrade against the one key in the image it is
+  running. Generate a new pair with `owr release keygen`, commit the new
+  `keys/release.pub` and publish a MINOR release signed with the **old** key; routers
+  that install it carry the new key and verify every later release against it. Only then
+  switch the secret. A router that skips that release needs it as a stepping stone.
 
 ## Reproducibility
 

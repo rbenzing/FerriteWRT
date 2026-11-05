@@ -34,8 +34,10 @@ uplink zones' `input_<zone>` chains. Masquerade is IPv4 only.
 `apply::apply(rs, nft_bin, run_dir)` writes `<run_dir>/firewall.nft` (0600, atomic) and
 runs `nft -f` directly (no shell, 10 s timeout, stderr capped at 4 KiB). After success it
 stores the script's SHA-256 in `<run_dir>/firewall.applied`. If the script file is
-unchanged and the marker matches, nothing is executed and `changed = false`. The marker
-lives on tmpfs, so a reboot always reloads. `apply::check` runs `nft -c -f -`.
+unchanged, the marker matches and `nft list table` confirms the table is still loaded (5 s
+timeout), nothing is reloaded and `changed = false`; a table that was flushed meanwhile is
+reloaded. The marker lives on tmpfs, so after a reboot the ruleset is always loaded again.
+`apply::check` runs `nft -c -f -`.
 
 ## Snapshots
 

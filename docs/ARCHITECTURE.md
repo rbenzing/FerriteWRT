@@ -38,12 +38,15 @@ crates/
   owr-config   typed system config, defaults derived from board, atomic store       (pure)
   owr-fw       firewall domain model -> nft ruleset text; applier (nft -f)          (pure + linux)
   owr-wifi     wifi domain model -> hostapd.conf; radio/phy discovery               (pure + linux)
-  owr-net      network plan model; planner (desired vs. observed); rtnetlink apply  (pure + linux)
-  owr-init     PID 1: mounts, uevent, services, reaping, journal, watchdog, shutdown (linux)
+  owr-net      network plan model; planner (desired vs. observed); rtnetlink apply;
+               DHCPv4 client; IPv6 router advertisements                            (pure + linux)
+  owr-init     PID 1: mounts, uevent, services, sandbox launcher, reaping, journal,
+               watchdog, upgrade writes, shutdown                                   (pure + linux)
   owr-api      HTTPS API + embedded UI, auth, sessions, RBAC, audit log             (pure + linux)
-  owr-apply    maps owr-config -> fw/wifi/net plans and drives appliers             (pure + linux)
+  owr-apply    maps owr-config -> fw/wifi/net plans and drives appliers; the
+               network daemon `owr-apply netd` (WAN DHCP client, router adverts)    (pure + linux)
   owr-upgrade  release signature contract, sysupgrade reader, verify + write plan   (pure)
-  owr-cli      `owr` binary: validate, render, diff, apply, board                   (bin)
+  owr-cli      `owr` binary: board, config, render, check, status, upgrade, release (bin)
 build/
   openwrt/common.diffconfig    OpenWrt config shared by every board (hardening, removed services)
   openwrt/<board>.diffconfig   the board's device selection, drivers and firmware
@@ -54,7 +57,9 @@ boards/<profile>.toml          one file per supported router, named by OpenWrt p
 scripts/openwrt-device-facts.sh  everything OpenWrt knows about one device, for porting
 ```
 
-Dependency direction is strictly downward: `owr-cli -> owr-apply/owr-api -> {fw,wifi,net,config} -> board -> common`.
+Dependency direction is strictly downward: the programs (`owr-cli`, `owr-api`, `owr-init`)
+-> `owr-apply`, `owr-upgrade` -> `{fw,wifi,net,config}` -> `board` -> `common`. `owr-api`
+and `owr-cli` also use `owr-init` as a library, for the client side of its control socket.
 Domain crates (fw, wifi, net) do **not** depend on owr-config; they expose their own
 plan types and owr-apply does the mapping. This keeps each crate locally reasonable
 and independently testable.
@@ -106,19 +111,23 @@ field-path errors.
 
 ## Runtime (owr-init)
 
-Boot: kernel `init=/sbin/owr-init` -> mount proc/sys/dev/run -> mount overlay
-(`PARTLABEL=rootfs_data`, f2fs, create on first boot) -> load board + config -> start
-journal -> netlink uevent listener (coldplug) -> `owr-apply` network/firewall/wifi ->
-supervise services (hostapd per radio, dnsmasq, owr-netd, owr-api) with exponential
-backoff and health checks -> pet `/dev/watchdog`. Buttons/LEDs are driven from board
-roles. Shutdown: SIGTERM services, sync, unmount, reboot/poweroff.
+Boot: the kernel runs `/sbin/init`, a symlink to `owr-init` that replaces procd's ->
+mount proc/sys/dev/run -> mount overlay (`PARTLABEL=rootfs_data`, f2fs, create on first
+boot; skipped when `/` is a RAM filesystem, i.e. the initramfs test image) -> load board +
+config -> start journal -> netlink uevent listener (coldplug) -> `owr-apply boot`
+(network, firewall, wifi, daemon configs) -> supervise services (hostapd per radio and
+dnsmasq, both confined by `owr-init --sandbox`; `owr-netd`; `owr-api`) with exponential
+backoff -> pet `/dev/watchdog`. Buttons/LEDs are driven from board roles. Shutdown:
+SIGTERM services, sync, unmount, reboot/poweroff; a firmware upgrade is written at this
+point, after every service has stopped.
 
 ## Build/image
 
 The OpenWrt tree at the pinned commit builds kernel + modules + kept C daemons from
 `build/openwrt/common.diffconfig` followed by `build/openwrt/<board>.diffconfig`, with the
 kernel fragments merged last (hardening on: STACKPROTECTOR_STRONG, ARM64_PTR_AUTH,
-ARM64_BTI, INIT_ON_ALLOC, SECCOMP, SECURITY+LANDLOCK+YAMA, DEBUG_LIST, no DEVMEM/KCORE).
+ARM64_BTI for userspace, INIT_ON_ALLOC, SECCOMP, SECURITY+LANDLOCK+YAMA, DEBUG_LIST, no
+DEVMEM/KCORE/KEXEC).
 Every line of both is verified against the expanded configs. The Rust binaries are
 cross-built for `aarch64-unknown-linux-musl` (static) and staged into `<openwrt>/files`.
 Output per board: the `.bin` images OpenWrt builds for it (factory, sysupgrade,

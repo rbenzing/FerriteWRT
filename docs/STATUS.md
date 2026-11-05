@@ -13,17 +13,20 @@ touching a router.
 | Wi-Fi renderer + hostapd control client (`owr-wifi`) | Snapshot tests of hostapd.conf; control-socket client tested on Linux against a fake hostapd |
 | Network planner + DHCPv4 client (`owr-net`) | Planner proven idempotent by an in-memory kernel simulator and proptest; DHCP codec fuzzed; state machine tested with fake transport |
 | PID 1 (`owr-init`) | Host tests on the pure state machines; supervisor smoke-tested in `--test-mode` on Linux (WSL) |
+| Daemon sandbox (`owr-init --sandbox`) | Launcher run as root under WSL: capability bounding set, `no_new_privs`, seccomp filter mode and a denied `mount` checked from inside the confined process; Landlock refuses writes outside the profile |
+| Upgrades (`owr-upgrade`, `owr upgrade`, UI) | Signature, hash, board, version and image-reader checks unit-tested, including tampered and malformed bundles; the write plan executed against files with read-back; API upload, check and install tested against the mock and the real backend |
 | HTTPS API (`owr-api`) | Tests incl. real TLS 1.2/1.3 handshakes, CSRF/RBAC/rate-limit/audit behaviour |
 | Web UI | Driven in Chromium via Playwright against the mock backend: setup wizard, dashboard, network, wireless pages |
 | Mapping + apply orchestration (`owr-apply`) | Snapshot tests for nft/hostapd/dnsmasq output; apply step order host-tested |
 | Network daemon (`owr-apply netd`) | Router advertisements checked byte for byte over a veth pair on Linux (WSL), including the rate-limited answer to a solicitation; shutdown on SIGTERM tested; the DHCP lease hand-off reuses the apply path |
 | Cross-compilation | Every binary builds as a static executable for `aarch64-unknown-linux-musl` with no C toolchain (not PIE, see below) |
 | OpenWrt image build | Runs in the release workflow (Docker); kernel and package config checked line by line; every board's config checked on each push |
-| Releases | v0.2.0 published: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations |
+| Releases | v0.2.0 and v0.2.1 published by the release workflow: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations. Use v0.2.1 (see below). `main` is 0.3.0 (upgrades, sandboxes, network daemon), not tagged until the first hardware boot works |
 | Dependency policy | `cargo deny check` clean: no C/asm crates, permissive licenses, no advisories |
 
 Linux-only code paths are exercised by `scripts/linux-tests.sh` (builds the test
-binaries for x86_64 musl and runs them inside the WSL `docker-desktop` distro).
+binaries for x86_64 musl and runs them as root inside the WSL `docker-desktop` distro;
+a failing test fails the script).
 
 ## What is NOT verified yet
 
@@ -66,6 +69,10 @@ Procedure details (U-Boot variables, addresses) are in [BUILD.md](BUILD.md).
    `nft -c -f /run/ferritewrt/firewall.nft`, `hostapd -t` style checks of
    `/run/ferritewrt/*.conf`, a LAN client getting a DHCP lease, NAT to the WAN, both
    radios beaconing, the UI at https://192.168.8.1.
+   From v0.3.0 the WAN lease comes from `owr-netd`: `owr status` lists it running,
+   `/run/ferritewrt/lease-eth1.json` holds the lease, and `/run/ferritewrt/netd.json`
+   shows what it runs. With `network.lan.ipv6 = ula`, a LAN client should get an `fd..`
+   address and the router's `fd..::1` as DNS server.
    From v0.3.0 dnsmasq and hostapd run confined (`owr-init --sandbox`). If one of
    them keeps restarting, its journal (`owr` UI logs, or the console) names the refused
    step or file; `touch /etc/ferritewrt/sandbox.off` and restart it to confirm the sandbox

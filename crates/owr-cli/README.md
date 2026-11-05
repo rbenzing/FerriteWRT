@@ -1,6 +1,7 @@
 # owr-cli
 
-`owr`: the FerriteWRT command-line tool. Pure commands work on any OS; `status` needs the router.
+`owr`: the FerriteWRT command-line tool. Pure commands work on any OS; `status` and `upgrade`
+(without `--check`) need the router.
 
 ## Global options
 
@@ -9,12 +10,13 @@
 | `--board <path>` | board descriptor (default `/etc/ferritewrt/board.toml`); give it before the subcommand (`owr release manifest` has its own `--board <id>`) |
 | `--board-id <id>` | use a descriptor compiled into the binary (`owr board list`); excludes `--board` |
 | `--config <path>` | config file (default `/etc/ferritewrt/config.toml`) |
+| `--log <level>` | log verbosity: `error`, `warn` (default), `info`, `debug`, `trace` |
 
 ## Commands
 
 | command | does |
 |---|---|
-| `board show \| validate <file> \| list` | inspect board descriptors |
+| `board show [--file f] \| validate <file> \| list` | inspect board descriptors (`show` prints JSON) |
 | `config validate [--file f]` | print every issue as `path: message`; exit 1 if any |
 | `config defaults` | default config for the board as TOML (no board option: Flint 2) |
 | `config show [--json]` | the config with secrets replaced by `***` |
@@ -25,7 +27,7 @@
 | `status [--json]` | service table from init over `/run/ferritewrt/init.sock` |
 | `upgrade <dir> [--downgrade] [--wipe-settings]` | hand a release bundle (sysupgrade image, `SHA256SUMS`, `SHA256SUMS.sig`) to init, which verifies it, writes it and reboots; settings are kept unless `--wipe-settings` |
 | `upgrade --check <dir> [--pubkey f]` | the same verification (signature, hash, board, version) anywhere; changes nothing |
-| `release keygen | sums | manifest | sign | verify | show` | build, sign and verify release artifacts (see "Release signing") |
+| `release keygen \| sums \| manifest \| sign \| verify \| show` | build, sign and verify release artifacts (see "Release signing") |
 
 `render`: `fw` and `dnsmasq` print text; `net`, `netd` and `sysctl` print JSON; `wifi` prints one
 `# --- <phy> ---` hostapd.conf per radio (`--json`: the radio plans). Wi-Fi passphrases are

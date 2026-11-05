@@ -24,8 +24,9 @@ SKIP_RUST=0
 CONFIG_ONLY=0                     # stop after .config + kernel fragment (CI diffconfig check)
 VERSION=""                        # default: [workspace.package] version of Cargo.toml
 RUST_TARGET=""                    # from [soc] arch of the board file, below
-REQUIRED_BINS=(owr-init owr-api owr)   # the build fails if one is missing
-OPTIONAL_BINS=(owr-apply)              # copied when the workspace builds it
+# Installed to /sbin; the build fails if one is missing. Paths must match owr-init's
+# services (owr_init::services::{APPLY_BIN, API_BIN}).
+REQUIRED_BINS=(owr-init owr-api owr-apply owr)
 
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -191,9 +192,6 @@ build_rust() {
     [ -f "$rel/$b" ] || die "workspace did not produce $rel/$b"
     install -m 0755 "$rel/$b" "$OUT_DIR/bin/$b"
   done
-  for b in "${OPTIONAL_BINS[@]}"; do
-    if [ -f "$rel/$b" ]; then install -m 0755 "$rel/$b" "$OUT_DIR/bin/$b"; fi
-  done
   for b in "$OUT_DIR"/bin/*; do
     file -b "$b" | grep -q 'ARM aarch64' || die "$b is not an aarch64 binary: $(file -b "$b")"
     file -b "$b" | grep -Eq 'statically linked|static-pie' || die "$b is not statically linked: $(file -b "$b")"
@@ -328,11 +326,14 @@ verify_rootfs() {
   [ -n "$root" ] || die "target rootfs root-${TARGET} not found under $OPENWRT_DIR/build_dir"
   [ "$(readlink "$root/sbin/init" || true)" = owr-init ] \
     || die "$root/sbin/init is not a symlink to owr-init (found: $(ls -l "$root/sbin/init" 2>&1)); the overlay did not replace procd's init"
-  [ -x "$root/sbin/owr-init" ] || die "$root/sbin/owr-init missing"
+  local b
+  for b in "${REQUIRED_BINS[@]}"; do
+    [ -x "$root/sbin/$b" ] || die "$root/sbin/$b missing"
+  done
   [ -f "$root/etc/ferritewrt/board.toml" ] || die "$root/etc/ferritewrt/board.toml missing"
   cmp -s "$root/usr/share/ferritewrt/release.pub" "$REPO_ROOT/keys/release.pub" \
     || die "$root/usr/share/ferritewrt/release.pub missing or not keys/release.pub"
-  log "rootfs check: /sbin/init -> owr-init, board.toml and release.pub present"
+  log "rootfs check: /sbin/init -> owr-init, ${REQUIRED_BINS[*]} in /sbin, board.toml and release.pub present"
 }
 
 # --- (g)(h) collect and summarise ------------------------------------------------

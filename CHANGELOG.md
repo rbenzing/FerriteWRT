@@ -44,6 +44,15 @@ All notable changes to FerriteWRT are recorded here. The format follows
   (DHCP) WAN would not have obtained a WAN address.
 - `scripts/linux-tests.sh` reported success when a Linux test failed (the exit status of a
   `tail` pipe was checked) and ran crate binaries as if they were tests.
+- owr-init started the management API from `/usr/bin/owr-api`, but the image installs it as
+  `/sbin/owr-api`, so the web UI would not have started on the router. A test now checks
+  that every program init starts is one the image build installs.
+- The image build treated `owr-apply` as optional; it is required now (without it the
+  router boots to the rescue console with no network configuration), and the finished
+  rootfs is checked for every FerriteWRT binary.
+- Documentation brought up to date with 0.3.0 (README, architecture, status, roadmap,
+  crate READMEs); `keys/README.md` described the key as compiled in and the effect of
+  losing the seed wrongly.
 
 ### Removed
 - odhcpd: not built into the image, no service, no sandbox profile. It needed ubus and UCI,

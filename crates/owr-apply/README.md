@@ -13,10 +13,11 @@ owr-apply --log info netd [--board P] [--config P]   # Linux; runs until SIGTERM
 ```
 
 `boot` creates the default config on first start, `apply` never does; both validate the config against
-the board (`Store::load_for`). `render` and `check` are strictly read-only: they read the file,
+the board (`Store::load_for`). `render` and `check` are strictly read-only: they read the file
+(or use the board defaults when it does not exist),
 parse it with `Config::from_toml_str` (migration happens in memory), run `validate_against(board)`
 and never write anything back (`Store::load` would chmod and rewrite the file). On other OSes
-`boot` and `apply` exit 2. `render --what wifi` prints the plan as JSON with passphrases replaced
+`boot`, `apply` and `netd` exit 2. `render --what wifi` prints the plan as JSON with passphrases replaced
 by `***`.
 
 Exit codes: 0 on success, also when there are warnings (printed to stderr as `warning: ...`);

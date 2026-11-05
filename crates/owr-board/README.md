@@ -15,7 +15,8 @@ The procedure, and where every field comes from in the OpenWrt tree, is in
 [docs/PORTING.md](../../docs/PORTING.md). Registration is one line in `BUILTIN_BOARDS` in
 `src/lib.rs`. `tests/repo_boards.rs` fails if a `boards/*.toml` file is not registered, if its
 `build/openwrt/<id>.diffconfig` does not select the OpenWrt device, if its module lists and
-that diffconfig disagree, or if the diffconfig repeats `common.diffconfig`.
+that diffconfig disagree, if the diffconfig repeats `common.diffconfig`, or if a board file
+is not in the form `build/build-image.sh` parses.
 
 Sizes and offsets (`partitions.size`, `cells.offset`, `cells.size`) are integers or strings
 such as `"0x80000"` (exactly `[0-9]+` or `0x[0-9a-fA-F]+`: no sign, no whitespace). Unknown keys are

@@ -60,8 +60,9 @@ kernel or the kept C daemons, and side channels on the SoC.
   (`/etc/ferritewrt`, the data partition and block devices are unreachable), and denies
   module loading, mounts, kexec, reboot, ptrace, bpf, `io_uring`, keyrings and clock
   changes with seccomp. Untested on hardware; `/etc/ferritewrt/sandbox.off` disables it.
-  `owr-api` and `owr-apply` (Rust, need broad network and file access) are not confined
-  yet.
+  `owr-api`, `owr-apply` and the network daemon `owr-netd` (Rust, need broad network and
+  file access; `owr-netd` parses DHCP replies from the WAN and router solicitations from
+  the LAN) are not confined yet.
 - **No shell in the control plane**: nothing in FerriteWRT spawns a shell or interprets
   strings as commands; daemons are exec'd directly with cleared environments.
 - **No package manager**: the image is immutable; updates are whole signed images.

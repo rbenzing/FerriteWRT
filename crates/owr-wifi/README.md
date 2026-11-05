@@ -28,7 +28,7 @@ never emits output for an invalid plan. Output is deterministic (insta snapshots
 | Open | `wpa=0 ieee80211w=0` |
 | Wpa2Psk | `WPA-PSK`, `ieee80211w=1`, `wpa_passphrase`, `wpa_disable_eapol_key_retries=1` |
 | Wpa3Sae | `SAE`, `ieee80211w=2`, `sae_password`, `sae_require_mfp=1`, `sae_pwe=2` |
-| Wpa2Wpa3Mixed | `WPA-PSK SAE`, `ieee80211w=1`, both passphrase keys |
+| Wpa2Wpa3Mixed | `WPA-PSK SAE`, `ieee80211w=1`, `sae_require_mfp=1`, both passphrase keys, `sae_pwe=2`, `wpa_disable_eapol_key_retries=1` |
 
 `ctrl_interface=<RUN_DIR>/hostapd` (`ctrl_dir()`) is emitted in every BSS block (one socket per ifname).
 
