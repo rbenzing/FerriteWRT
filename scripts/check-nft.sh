@@ -28,6 +28,26 @@ nft --version
 ip netns add "$ns"
 
 fail=0
+# report <ok|FAIL> <message>: stdout, plus a GitHub annotation under Actions so the result
+# can be read from the run without its log.
+report() {
+  echo "$1 $2"
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    if [ "$1" = ok ]; then echo "::notice title=nft -c::$2"; else echo "::error title=nft -c::$2"; fi
+  fi
+}
+
+# Negative control: a ruleset nft parses but the kernel refuses (dnat belongs in a nat
+# chain). If this passes, the check is not reaching the kernel and proves nothing.
+printf '%s\n' 'table inet owr_selftest {' \
+  '  chain c { type filter hook input priority filter; policy accept; tcp dport 22 dnat ip to 192.0.2.1; }' \
+  '}' >"$work/selftest.nft"
+if ip netns exec "$ns" nft -c -f "$work/selftest.nft" >/dev/null 2>&1; then
+  report FAIL "self-test: nft -c accepted a ruleset the kernel must reject"
+  exit 1
+fi
+report ok "self-test: the kernel rejects an invalid ruleset"
+
 # check <name> [owr-apply render options...]
 check() {
   local name=$1 script rendered devices d out
@@ -35,7 +55,7 @@ check() {
   rendered="$work/$name.nft"
   script="$work/$name.check.nft"
   if ! "$apply" render --what fw --board "$board" "$@" >"$rendered"; then
-    echo "FAIL $name: rendering failed"
+    report FAIL "$name: rendering failed"
     fail=1
     return
   fi
@@ -45,9 +65,9 @@ check() {
   done
   grep -vE '^[[:space:]]*flags offload;$' "$rendered" >"$script"
   if out=$(ip netns exec "$ns" nft -c -f "$script" 2>&1); then
-    echo "ok   $name ($(grep -c . "$rendered") lines)"
+    report ok "$name: $(grep -c . "$rendered") lines accepted, flowtable on: ${devices//$'\n'/ }"
   else
-    echo "FAIL $name"
+    report FAIL "$name: $(printf '%s' "$out" | head -n 3 | tr '\n' ' ')"
     printf '%s\n' "$out"
     echo "--- rendered ruleset ---"
     cat -n "$rendered"
