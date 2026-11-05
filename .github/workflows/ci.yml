@@ -149,7 +149,7 @@ jobs:
         run: scripts/ci-test.sh --workspace --locked --target x86_64-unknown-linux-musl
 
   nft:
-    name: firewall rulesets load in a real kernel (nft -c)
+    name: firewall rulesets load in a real kernel
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -158,6 +158,6 @@ jobs:
       - name: nftables
         run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables
       - run: cargo build --locked -p owr-apply
-      - name: render every fixture and check it with nft -c (network namespace)
+      - name: render every fixture and load it with nft -f (throw-away network namespace)
         # sudo clears the environment; the script needs GITHUB_ACTIONS to emit annotations.
         run: sudo GITHUB_ACTIONS=true scripts/check-nft.sh target/debug/owr-apply
