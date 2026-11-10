@@ -43,7 +43,7 @@ owr-upgrade = { path = "crates/owr-upgrade" }
 # External: pure Rust only (see deny.toml). Pin minor versions.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.9"
+toml = "1.2"
 thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi", "registry"] }
