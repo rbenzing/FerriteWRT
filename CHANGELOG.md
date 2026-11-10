@@ -7,6 +7,12 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
+  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
+  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
+  cryptographic value" alerts were test fixtures, not production code.
+- `.github/dependabot.yml`: weekly update PRs for the Cargo graph (minor/patch grouped), the
+  GitHub Actions in the workflows, and the build image's base (`build/Dockerfile`).
 - CI loads every rendered firewall ruleset into a real kernel (`scripts/check-nft.sh`, job
   "firewall rulesets load in a real kernel"): the board defaults and the fixtures in
   `build/nft-check/` are loaded with `nft -f` in a throw-away network namespace, the board's
@@ -32,6 +38,10 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [0.3.0-rc.1] - 2026-11-04
 
 ### Added
+- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
+  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
+  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
+  cryptographic value" alerts were test fixtures, not production code.
 - Firmware upgrades from a running router (`crates/owr-upgrade`). A bundle is the release's
   `-sysupgrade.bin`, `SHA256SUMS` and `SHA256SUMS.sig`; it is verified against the release
   key the image ships (`/usr/share/ferritewrt/release.pub`), then the image's hash, its
@@ -105,6 +115,10 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [0.2.0] - 2026-11-03
 
 ### Added
+- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
+  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
+  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
+  cryptographic value" alerts were test fixtures, not production code.
 - Router porting: `docs/PORTING.md` (procedure, support limits, where every board field
   comes from in OpenWrt), `scripts/openwrt-device-facts.sh` (support verdict and every
   hardware fact for one OpenWrt device, plus `--search`), and the `/ferrite-forge` Claude
@@ -161,6 +175,10 @@ First tagged release. Nothing in it has run on hardware yet; the images are for 
 initramfs TFTP test boot described in `docs/STATUS.md`.
 
 ### Added
+- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
+  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
+  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
+  cryptographic value" alerts were test fixtures, not production code.
 - Phase-1 scaffold for the GL.iNet Flint 2 (GL-MT6000): board descriptor, typed
   configuration, network planner with DHCPv4 client, nftables renderer, hostapd
   renderer and control client, PID 1 supervisor, HTTPS management API with embedded

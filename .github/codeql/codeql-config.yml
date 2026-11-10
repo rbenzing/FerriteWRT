@@ -1,0 +1,7 @@
+name: ferritewrt codeql config
+# Test fixtures use throw-away literals (passwords like "wrong password!!") that
+# trip rust/hard-coded-cryptographic-value. Production code has none.
+paths-ignore:
+  - "**/tests/**"
+  - "**/tests.rs"
+  - "**/*_tests.rs"
