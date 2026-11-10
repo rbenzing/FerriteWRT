@@ -2,7 +2,7 @@
 # Rust workspace, on any host with Docker (Windows hosts included).
 #   docker build -t ferritewrt-build:1 -f build/Dockerfile build/
 # Normally invoked through build/run-in-docker.sh.
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 # Host UID/GID that owns bind-mounted files (run-in-docker.sh passes the caller's on Linux).
