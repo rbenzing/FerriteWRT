@@ -76,7 +76,7 @@ serde_path_to_error = "0.1"
 password-hash = { version = "0.5", default-features = false }
 rustix = { version = "1.0", features = ["fs", "process", "mount", "net", "pipe", "event", "system", "thread", "time", "stdio", "mm"] }
 socket2 = { version = "0.6", features = ["all"] }
-rtnetlink = "0.23"
+rtnetlink = "0.24"
 netlink-packet-route = "0.33"  # must match the version rtnetlink is built on
 netlink-packet-core = "0.9"
 netlink-sys = "0.9"
