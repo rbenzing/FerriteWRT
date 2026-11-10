@@ -34,7 +34,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: check version, changelog, lock file
         run: |
@@ -54,7 +54,7 @@ jobs:
     needs: compliance
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -74,13 +74,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Restore and save are separate so the cache is saved even when the build fails:
       # the toolchain and kernel take about an hour and a failure after them (a config
       # check, a package) should not cost that hour again. Each run saves under its own
       # key; restore takes the newest. The OpenWrt build is incremental on that tree.
       - name: restore OpenWrt tree, downloads and cargo state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cache/ferritewrt/openwrt
@@ -117,7 +117,7 @@ jobs:
         if: always()
         # A tree over the cache size limit fails to save; that must not fail the release.
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.cache/ferritewrt/openwrt
@@ -125,7 +125,7 @@ jobs:
           key: openwrt-${{ github.run_id }}
       - name: list artifacts
         run: ls -la build/out/images && cat build/out/images/manifest.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ env.BOARD }}-${{ needs.compliance.outputs.version }}
           path: build/out/images/
@@ -147,12 +147,12 @@ jobs:
       id-token: write        # build provenance attestation
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: build host owr (release tooling)
         run: cargo build --release --locked -p owr-cli
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: firmware-${{ env.BOARD }}-${{ needs.compliance.outputs.version }}
           path: dist
@@ -181,7 +181,7 @@ jobs:
           rm -f dist/SHA256SUMS.sig
       - name: attest build provenance
         if: github.event_name == 'push'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/*.bin
@@ -190,7 +190,7 @@ jobs:
             dist/SHA256SUMS
       - name: publish GitHub release
         if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ferritewrt ${{ github.ref_name }}
           prerelease: ${{ needs.compliance.outputs.prerelease == 'true' }}
@@ -215,7 +215,7 @@ jobs:
             dist/SHA256SUMS.sig
             dist/build-info.txt
           fail_on_unmatched_files: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name != 'push'
         with:
           name: dry-run-${{ env.BOARD }}-${{ needs.compliance.outputs.version }}
