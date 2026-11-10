@@ -17,7 +17,7 @@ jobs:
     name: version compliance
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: scripts/check-version.sh
 
@@ -25,7 +25,7 @@ jobs:
     name: fmt / clippy / test (host)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -39,7 +39,7 @@ jobs:
     name: dependency policy
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -48,8 +48,8 @@ jobs:
     name: web UI modules parse (CSP-clean, no inline code)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: syntax check every module as an ES module
@@ -69,7 +69,7 @@ jobs:
     name: router binaries (aarch64 musl, static)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-musl
@@ -85,7 +85,7 @@ jobs:
             if aarch64-linux-gnu-readelf -d "$f" | grep -q NEEDED; then echo "dynamic deps found"; exit 1; fi
             if aarch64-linux-gnu-readelf -lW "$f" | grep GNU_STACK | grep -q RWE; then echo "executable stack"; exit 1; fi
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: owr-aarch64
           path: |
@@ -99,9 +99,9 @@ jobs:
     name: OpenWrt config of every board survives make defconfig
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: cache the OpenWrt checkout
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/openwrt
           key: openwrt-tree-${{ hashFiles('build/build-image.sh') }}
@@ -140,7 +140,7 @@ jobs:
     name: Linux-only test paths (x86_64 musl)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
@@ -152,7 +152,7 @@ jobs:
     name: firewall rulesets load in a real kernel
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: nftables
