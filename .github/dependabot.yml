@@ -34,5 +34,9 @@ updates:
     directory: /build
     schedule:
       interval: weekly
+    ignore:
+      # The base image is the OpenWrt build host, exercised only by the release workflow.
+      # Move it by hand (and prove it on an -rc tag), not through an unreviewed PR.
+      - dependency-name: ubuntu
     commit-message:
       prefix: "build"

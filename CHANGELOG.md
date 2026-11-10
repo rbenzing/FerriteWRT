@@ -29,6 +29,11 @@ All notable changes to FerriteWRT are recorded here. The format follows
   `owr render pppoe` show the options with the password hidden. IPv4 only.
 
 ### Fixed
+- Dependency updates merged from Dependabot: `toml` 1.2, `tower-http` 0.7, `rtnetlink` 0.24
+  with `netlink-packet-route` 0.34, and `argon2` 0.6 with `password-hash` 0.6 (the salt is now
+  drawn by the library from the OS RNG; hash parameters and the PHC policy are unchanged, and the
+  salt-length check now counts decoded bytes). The Ubuntu 26.04 build-image bump is deferred
+  and ignored by Dependabot until proven on an `-rc` tag.
 - Build broken by the merged Dependabot bumps: `rand` 0.10 moved `random_range`/`fill` to
   `RngExt`, `OsRng` to `SysRng` (release key generation) and `from_os_rng` to `from_rng`;
   `netlink-packet-route` is pinned back to 0.33, the version `rtnetlink` 0.23 is built on

@@ -9,7 +9,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use ipnet::Ipv4Net;
-use password_hash::PasswordHash;
+use password_hash::phc::PasswordHash;
 
 use crate::error::Issue;
 use crate::model::{
@@ -181,8 +181,9 @@ fn is_timezone(s: &str) -> bool {
 /// upper bounds keep a hostile or corrupted config from making every login allocate gigabytes.
 const ARGON2_PARAMS: [(&str, RangeInclusive<u32>); 3] =
     [("m", 8192..=1_048_576), ("t", 1..=10), ("p", 1..=16)];
-/// Base64 characters needed to encode 8 bytes.
-const MIN_SALT_B64_LEN: usize = 11;
+/// `phc::Salt` and `Output` report decoded bytes (password-hash 0.6): 8 bytes of salt is 11
+/// Base64 characters.
+const MIN_SALT_BYTES: usize = 8;
 const MIN_HASH_BYTES: usize = 16;
 
 /// Check an argon2id PHC string: parseable, bounded cost parameters, a salt of at least
@@ -219,7 +220,7 @@ pub(crate) fn check_phc(s: &str) -> Result<(), &'static str> {
     if seen.iter().any(|s| !s) {
         return Err("argon2 parameters m, t and p are all required");
     }
-    if phc.salt.is_none_or(|salt| salt.len() < MIN_SALT_B64_LEN) {
+    if phc.salt.is_none_or(|salt| salt.len() < MIN_SALT_BYTES) {
         return Err("missing or too short salt (need at least 8 bytes)");
     }
     if phc.hash.is_none_or(|hash| hash.len() < MIN_HASH_BYTES) {

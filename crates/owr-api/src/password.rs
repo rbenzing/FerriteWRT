@@ -3,8 +3,8 @@
 use std::sync::OnceLock;
 
 use argon2::Argon2;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 
 /// Minimum password length in characters.
 pub const MIN_PASSWORD_CHARS: usize = 12;
@@ -18,10 +18,10 @@ pub struct HashError(String);
 
 /// Hash with Argon2id using the crate defaults: m = 19456 KiB, t = 2, p = 1 (OWASP).
 pub fn hash_password(password: &str) -> Result<String, HashError> {
-    let salt = SaltString::generate(&mut OsRng);
+    // The 0.6 API draws a 16-byte salt from the OS RNG itself.
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map(|h| h.to_string())
+        .hash_password(password.as_bytes())
+        .map(|h: PasswordHash| h.to_string())
         .map_err(|e| HashError(e.to_string()))
 }
 

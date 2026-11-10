@@ -5,8 +5,8 @@ use std::fs;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHasher, SaltString};
+use argon2::password_hash::PasswordHasher;
+use argon2::password_hash::phc::PasswordHash;
 use argon2::{Algorithm, Argon2, Params, Version};
 use owr_apply::Plans;
 use owr_board::{Board, BoardError};
@@ -149,10 +149,9 @@ fn hash_password(password: &str) -> Result<String, CliError> {
     let params = Params::new(19_456, 2, 1, None)
         .map_err(|e| CliError::Usage(format!("argon2 parameters: {e}")))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let salt = SaltString::generate(&mut OsRng);
     argon
-        .hash_password(password.as_bytes(), &salt)
-        .map(|h| h.to_string())
+        .hash_password(password.as_bytes())
+        .map(|h: PasswordHash| h.to_string())
         .map_err(|e| CliError::Usage(format!("hashing password: {e}")))
 }
 
