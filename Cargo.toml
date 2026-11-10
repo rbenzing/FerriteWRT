@@ -73,7 +73,7 @@ landlock = "0.4"
 libc = "0.2"
 seccompiler = "0.5"
 serde_path_to_error = "0.1"
-password-hash = { version = "0.5", default-features = false }
+password-hash = { version = "0.6", default-features = false }
 rustix = { version = "1.0", features = ["fs", "process", "mount", "net", "pipe", "event", "system", "thread", "time", "stdio", "mm"] }
 socket2 = { version = "0.6", features = ["all"] }
 rtnetlink = "0.23"
