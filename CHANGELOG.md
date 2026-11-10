@@ -29,6 +29,11 @@ All notable changes to FerriteWRT are recorded here. The format follows
   `owr render pppoe` show the options with the password hidden. IPv4 only.
 
 ### Fixed
+- Build broken by the merged Dependabot bumps: `rand` 0.10 moved `random_range`/`fill` to
+  `RngExt`, `OsRng` to `SysRng` (release key generation) and `from_os_rng` to `from_rng`;
+  `netlink-packet-route` is pinned back to 0.33, the version `rtnetlink` 0.23 is built on
+  (0.34 alone put two incompatible copies of the message types in the graph). Dependabot now
+  groups `rtnetlink` and `netlink-*` so they move together.
 - `restart` of a service whose config file was removed (a radio or PPPoE switched off)
   started it anyway, and it failed in a loop; init now only stops it and starts it again
   once the file exists.

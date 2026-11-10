@@ -11,6 +11,11 @@ updates:
     commit-message:
       prefix: "deps"
     groups:
+      # rtnetlink is built on a specific netlink-packet-route; bumping one alone leaves two
+      # incompatible copies of the message types in the graph (this broke main once).
+      # They move together, majors included. Listed first: a crate joins the first group it matches.
+      netlink:
+        patterns: ["rtnetlink", "netlink-*"]
       # One PR for compatible bumps; majors stay separate so they get reviewed alone.
       cargo-minor-patch:
         update-types: [minor, patch]

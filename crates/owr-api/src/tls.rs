@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use p256::ecdsa::{DerSignature, SigningKey};
 use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
-use rand::Rng;
+use rand::RngExt;
 use rustls::ServerConfig;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};

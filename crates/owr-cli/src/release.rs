@@ -14,7 +14,7 @@ use std::time::SystemTime;
 
 use ed25519_dalek::{Signer as _, SigningKey};
 use owr_common::atomic_write;
-use rand::TryRngCore as _;
+use rand::TryRng as _;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -141,7 +141,7 @@ pub(crate) fn keygen(
     out_dir: Option<&Path>,
 ) -> Result<(), CliError> {
     let mut seed = Zeroizing::new([0u8; 32]);
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut *seed)
         .map_err(|e| fail(format!("OS random source failed: {e}")))?;
     let key = SigningKey::from_bytes(&seed);

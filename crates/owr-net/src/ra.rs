@@ -13,7 +13,7 @@ use std::net::Ipv6Addr;
 use std::time::Duration;
 
 use ipnet::Ipv6Net;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 

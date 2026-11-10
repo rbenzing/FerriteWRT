@@ -92,7 +92,7 @@ async fn wait_or_stop(shutdown: &mut watch::Receiver<bool>, d: Duration) -> bool
 }
 
 async fn serve(socket: &RaSocket, packet: &[u8], shutdown: &mut watch::Receiver<bool>) {
-    let mut rng = StdRng::from_os_rng();
+    let mut rng = StdRng::from_rng(&mut rand::rng());
     let mut pacer = Pacer::new(Instant::now());
     let mut buf = [0u8; 1500];
     info!("advertising");
