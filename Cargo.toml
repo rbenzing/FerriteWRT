@@ -61,7 +61,7 @@ p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8"] }
 x509-cert = { version = "0.3", features = ["builder", "pem"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 argon2 = { version = "0.5", features = ["std"] }
-rand = "0.9"
+rand = "0.10"
 subtle = "2"
 zeroize = { version = "1", features = ["derive"] }
 sha2 = "0.11"
