@@ -45,8 +45,8 @@ integrity and performance**, then ease of use.
 - **♻️ Idempotent apply** — observe, plan, apply, verify; re-running an apply never flaps a working link
 - **🌐 Management over HTTPS only** — argon2id passwords, CSRF, admin and viewer roles, audit log, strict CSP
 - **📦 Signed releases and upgrades** — every firmware release ships `SHA256SUMS`, an ed25519 signature and GitHub build-provenance attestations; a running router installs a release only after checking that signature, the board and the version
-- **🧱 Confined network daemons** — the two C daemons that parse network traffic (dnsmasq, hostapd) start under Landlock, seccomp and a reduced capability set, with no access to settings, keys or flash
-- **🌐 IPv6 on the LAN** — when switched on, router advertisements from Rust give every LAN and VLAN bridge a ULA prefix and the router as IPv6 DNS server (internet IPv6 is on the roadmap)
+- **🧱 Confined network daemons** — the C daemons that parse network traffic (dnsmasq, hostapd, and pppd on a PPPoE line) start under Landlock, seccomp and a reduced capability set, with no access to settings, keys or flash
+- **🌐 IPv6** — Rust router advertisements give every LAN and VLAN bridge a ULA prefix and the router as IPv6 DNS server; with `wan.ipv6 = "dhcpv6"` a Rust DHCPv6 client takes a delegated prefix from the ISP (also over PPPoE), splits it into a /64 per bridge and makes the router the IPv6 gateway (built and tested, not yet run against an ISP)
 - **🖥️ Web UI without a framework** — vanilla ES modules, no inline code, verified in Chromium
 - **🔧 Data-driven hardware** — ports, radios, LEDs and buttons come from one `boards/<router>.toml` per device
 
@@ -179,12 +179,15 @@ Docker; see [docs/BUILD.md](docs/BUILD.md).
 ## 🚦 Status
 
 The phase 1 control plane is complete, and from phase 2 the firmware upgrades, the daemon
-sandboxes and the Rust network daemon (WAN DHCP client, IPv6 router advertisements) are
-done. Every crate compiles for the router target (`aarch64-unknown-linux-musl`, static, no
-C toolchain required), the pure logic is unit-tested on the host, the Linux paths run as
-root under WSL, and the UI is verified in a browser. The latest stable release is
-v0.2.1; v0.3.0-rc.1 is the pre-release for the first hardware boot, and v0.3.0 follows
-once it works. **Not yet flashed to hardware.** The hand-off state and the next hardware
+sandboxes, PPPoE, and the Rust network daemon (WAN DHCP and DHCPv6 prefix-delegation clients,
+IPv6 router advertisements) are done. Every crate compiles for the router target
+(`aarch64-unknown-linux-musl`, static, no C toolchain required), the pure logic is
+unit-tested on the host, the Linux paths run as root under WSL, every rendered firewall
+ruleset loads into a real kernel in CI, and the UI is verified in a browser. The latest
+stable release is v0.2.1; v0.3.0-rc.2 is the pre-release for the first hardware boot, and
+v0.3.0 follows once it works. **Not yet flashed to hardware.** Still open: confining the
+management API (it needs privilege separation first), a Rust DHCP/DNS server in place of
+dnsmasq, and position-independent binaries. The hand-off state and the next hardware
 session are in
 [docs/STATUS.md](docs/STATUS.md); what comes after in [docs/ROADMAP.md](docs/ROADMAP.md).
 
