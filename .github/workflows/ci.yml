@@ -79,7 +79,7 @@ jobs:
           targets: aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked --target aarch64-unknown-linux-musl -- -D warnings
-      - name: build the router binaries (relinked: cached ones may not be PIE)
+      - name: build the router binaries (relinked, since cached ones may not be PIE)
         run: |
           rm -f target/aarch64-unknown-linux-musl/release/{owr-init,owr-api,owr-apply,owr}
           cargo build --release --locked --target aarch64-unknown-linux-musl --workspace
