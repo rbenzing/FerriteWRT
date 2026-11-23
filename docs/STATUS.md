@@ -121,9 +121,6 @@ patch release.
 
 ## Follow-ups queued
 
-- Replace `humantime` (config duration strings, RFC 3339 in `owr release`): RUSTSEC-2026-0542
-  marks it unmaintained and `deny.toml` carries the one exception. The replacement must read
-  every duration the current config format accepts and write the same strings back.
 - The phase 2 list in [ROADMAP.md](ROADMAP.md).
 - First upgrade on hardware: from a flashed v0.3.0 or later, upgrade to the next release
   through the UI and through `owr upgrade`; watch the console for the prune, the three

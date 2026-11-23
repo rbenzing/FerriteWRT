@@ -1,5 +1,5 @@
 //! Small value types shared by the config model: secrets, MAC addresses, port ranges and
-//! the humantime duration codec.
+//! the duration codec (`owr_common::time`).
 
 use std::fmt;
 use std::str::FromStr;
@@ -231,19 +231,19 @@ impl<'de> Deserialize<'de> for PortRange {
     }
 }
 
-/// serde codec for `std::time::Duration` as a humantime string (`"12h"`, `"30m"`).
+/// serde codec for `std::time::Duration` as text (`owr_common::time`) (`"12h"`, `"30m"`).
 pub(crate) mod duration_str {
     use std::time::Duration;
 
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub(crate) fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
-        s.collect_str(&humantime::format_duration(*d))
+        s.collect_str(&owr_common::time::format_duration(*d))
     }
 
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
         let s = String::deserialize(d)?;
-        humantime::parse_duration(&s)
+        owr_common::time::parse_duration(&s)
             .map_err(|e| serde::de::Error::custom(format!("invalid duration '{s}': {e}")))
     }
 }

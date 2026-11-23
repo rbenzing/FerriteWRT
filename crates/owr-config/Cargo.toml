@@ -15,7 +15,6 @@ toml.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 ipnet.workspace = true
-humantime.workspace = true
 sha2.workspace = true
 zeroize.workspace = true
 subtle.workspace = true

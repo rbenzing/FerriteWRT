@@ -8,14 +8,6 @@ targets = [
 [advisories]
 yanked = "deny"
 unmaintained = "workspace"
-ignore = [
-  # humantime (duration strings such as "12h" in the config, RFC 3339 times in `owr release`)
-  # was declared unmaintained on 2026-11 and has no fix. It is a notice, not a vulnerability:
-  # nothing in it parses untrusted binary input beyond short text. Replacing it changes how
-  # config durations are written, so that is a deliberate migration (docs/STATUS.md,
-  # "Follow-ups queued"); until then this is the only unmaintained-crate exception.
-  { id = "RUSTSEC-2026-0542", reason = "humantime unmaintained, no replacement drop-in; migration queued" },
-]
 
 [licenses]
 # Workspace crates are GPL-2.0-only and never published; third-party deps must be permissive.

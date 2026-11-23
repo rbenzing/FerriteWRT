@@ -251,11 +251,11 @@ pub(crate) fn manifest(
     }
     let built_utc = match &args.built_utc {
         Some(t) => {
-            humantime::parse_rfc3339(t)
+            owr_common::time::parse_rfc3339(t)
                 .map_err(|e| fail(format!("--built-utc is not RFC 3339: {e}")))?;
             t.clone()
         }
-        None => humantime::format_rfc3339_seconds(now).to_string(),
+        None => owr_common::time::format_rfc3339_seconds(now),
     };
 
     let names = regular_files(dir, &[SUMS_FILE, SIG_FILE, MANIFEST_FILE])?;

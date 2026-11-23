@@ -23,7 +23,6 @@ owr-upgrade.workspace = true
 argon2.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
-humantime.workspace = true
 rand.workspace = true
 serde.workspace = true
 zeroize.workspace = true

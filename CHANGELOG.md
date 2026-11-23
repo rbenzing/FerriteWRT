@@ -16,6 +16,14 @@ All notable changes to FerriteWRT are recorded here. The format follows
   runs it again on the binaries inside the rootfs. The CI job is renamed "router binaries
   (aarch64 musl, static-PIE)". Not run on the router yet.
 
+### Changed
+- `humantime` is replaced by `owr_common::time` (RUSTSEC-2026-0542 marked it unmaintained):
+  durations in the config and RFC 3339 times in `owr release`. Written text is byte for byte what
+  `humantime` wrote (`1h 30m`, `1day 1h`, `1month`), and everything it read in practice still
+  reads (`90s`, `1h30m`, `2weeks`, `1.5h`, a bare `0`), checked against vectors taken from the
+  old crate and by round-trip property tests. Slightly stricter, on purpose: `23:59:60` is no
+  timestamp. The `deny.toml` exception is gone.
+
 ## [0.3.0-rc.2] - 2026-11-23
 
 ### Added

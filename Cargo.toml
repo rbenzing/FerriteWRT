@@ -79,7 +79,6 @@ ipnet = { version = "2", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 include_dir = "0.7"
 mime_guess = "2"
-humantime = "2"
 tempfile = "3"
 proptest = "1"
 insta = "1"
