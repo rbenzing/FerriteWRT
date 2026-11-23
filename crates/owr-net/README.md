@@ -102,9 +102,19 @@ in-memory server.
 
 `RaSpec { link, prefix, dns }` advertises one /64 on one link (RFC 4861): prefix
 information with on-link and autonomous flags (valid 24 h, preferred 4 h) and RDNSS
-(RFC 8106, lifetime 20 min, at most 3 servers). Router lifetime 0 and M = O = 0: hosts
-configure a SLAAC address and learn the DNS server, but the router is not their IPv6
-default gateway (there is no WAN IPv6 yet) and there is no `DHCPv6`. `Pacer` follows the
+(RFC 8106, lifetime 20 min, at most 3 servers). On its own that is router lifetime 0 and
+M = O = 0: hosts configure a SLAAC address and learn the DNS server, but the router is not
+their IPv6 default gateway and there is no `DHCPv6` server.
+
+At runtime a sender also takes [`RaDynamic`]: the delegated /64s of its link from the `DHCPv6`
+client (`RaPrefix { prefix, valid, preferred }`, at most 4, each a global /64, else skipped
+with a warning). While one is valid they are advertised next to the ULA prefix with their
+remaining lifetimes (counted down from when the delegation held, so a host never keeps an
+address longer than the router), and the router lifetime is 30 min: the router is the default
+gateway. When the delegation goes, the prefix is advertised once more with lifetimes 0 and the
+router lifetime drops to 0 (hosts deprecate the address; RFC 4862 lets them ignore a *valid*
+lifetime cut below 2 h, which is why preferred 0 matters). Every change restarts the short
+initial schedule (`Pacer::updated`, still 3 s apart at the least). `Pacer` follows the
 RFC 4861 timing: the first three advertisements at most 16 s apart, then every 200-600 s
 at random; a Router Solicitation brings the next one forward by up to 500 ms, never
 sooner than 3 s after the previous one. Everything is multicast to `ff02::1`.
@@ -112,8 +122,10 @@ sooner than 3 s after the previous one. Everything is multicast to `ff02::1`.
 `linux::ra::run` uses a raw ICMPv6 socket bound to the link (hop limit 255, member of
 `ff02::2`). The kernel fills in and checks the checksum; the hop limit of a received
 solicitation cannot be read through this socket, which is harmless: a forged one can only
-trigger one more multicast advertisement, rate-limited as above. Tested end to end over a
-veth pair (root, Linux).
+trigger one more multicast advertisement, rate-limited as above. `run_dynamic` takes the
+`watch` channel of `RaDynamic` (`run` is the static form). Tested end to end over veth pairs
+(root, Linux): the static advertisement and the solicitation rate limit, and a prefix handed
+to a running sender appearing on the wire, then deprecated.
 
 ## Single-writer rule
 

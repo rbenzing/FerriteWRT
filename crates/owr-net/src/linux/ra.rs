@@ -15,8 +15,10 @@ use tokio::time::Instant;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use super::sysfs;
-pub use crate::ra::RaSpec;
-use crate::ra::{Pacer, is_router_solicitation, router_advertisement};
+use crate::ra::{Pacer, is_router_solicitation, router_advertisement_with};
+pub use crate::ra::{RaDynamic, RaPrefix, RaSpec};
+#[cfg(test)]
+use ipnet::Ipv6Net;
 
 /// Where advertisements go (all nodes on the link).
 const ALL_NODES: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
@@ -56,20 +58,32 @@ impl RaSocket {
     }
 }
 
-/// Advertise `spec` until `shutdown` turns true (or its sender is dropped). An invalid spec
-/// is logged and nothing is sent; a link that cannot be opened yet is retried every 5 s.
-pub async fn run(spec: RaSpec, mut shutdown: watch::Receiver<bool>) {
+/// Advertise `spec` alone (no delegated prefixes) until `shutdown` turns true.
+pub async fn run(spec: RaSpec, shutdown: watch::Receiver<bool>) {
+    let (_keep_open, updates) = watch::channel(RaDynamic::none());
+    run_dynamic(spec, updates, shutdown).await;
+}
+
+/// Advertise `spec` plus the delegated prefixes `updates` currently holds until `shutdown`
+/// turns true (or its sender is dropped). Every change of `updates` is advertised soon and then
+/// repeated at the short initial intervals; a prefix that is not a global /64 is skipped with a
+/// warning. An invalid spec is logged and nothing is sent; a link that cannot be opened yet is
+/// retried every 5 s.
+pub async fn run_dynamic(
+    spec: RaSpec,
+    mut updates: watch::Receiver<RaDynamic>,
+    mut shutdown: watch::Receiver<bool>,
+) {
     let span = info_span!("ra", link = %spec.link, prefix = %spec.prefix);
     async move {
         if let Err(e) = spec.validate() {
             error!(error = %e, "not advertising");
             return;
         }
-        let packet = router_advertisement(&spec);
         loop {
             match RaSocket::open(&spec.link) {
                 Ok(socket) => {
-                    serve(&socket, &packet, &mut shutdown).await;
+                    serve(&socket, &spec, &mut updates, &mut shutdown).await;
                     return;
                 }
                 Err(e) => warn!(error = %e, "cannot open the advertisement socket; retrying"),
@@ -91,7 +105,26 @@ async fn wait_or_stop(shutdown: &mut watch::Receiver<bool>, d: Duration) -> bool
     }
 }
 
-async fn serve(socket: &RaSocket, packet: &[u8], shutdown: &mut watch::Receiver<bool>) {
+/// The advertisement for `spec` and what `updates` holds now; unusable prefixes are dropped.
+fn current_packet(spec: &RaSpec, updates: &watch::Receiver<RaDynamic>) -> Vec<u8> {
+    let mut dynamic = updates.borrow().clone();
+    dynamic.prefixes.retain(|p| match p.validate(&spec.link) {
+        Ok(()) => true,
+        Err(e) => {
+            warn!(error = %e, "not advertising the delegated prefix");
+            false
+        }
+    });
+    router_advertisement_with(spec, &dynamic, Instant::now())
+}
+
+async fn serve(
+    socket: &RaSocket,
+    spec: &RaSpec,
+    updates: &mut watch::Receiver<RaDynamic>,
+    shutdown: &mut watch::Receiver<bool>,
+) {
+    let mut updates_open = true;
     let mut rng = StdRng::from_rng(&mut rand::rng());
     let mut pacer = Pacer::new(Instant::now());
     let mut buf = [0u8; 1500];
@@ -99,7 +132,8 @@ async fn serve(socket: &RaSocket, packet: &[u8], shutdown: &mut watch::Receiver<
     loop {
         tokio::select! {
             () = tokio::time::sleep_until(pacer.due()) => {
-                match socket.socket.send_to(packet, socket.dest).await {
+                let packet = current_packet(spec, updates);
+                match socket.socket.send_to(&packet, socket.dest).await {
                     Ok(_) => debug!("router advertisement sent"),
                     // Typically: no usable link-local address yet (no carrier, DAD running).
                     Err(e) => warn!(error = %e, "router advertisement not sent"),
@@ -120,6 +154,15 @@ async fn serve(socket: &RaSocket, packet: &[u8], shutdown: &mut watch::Receiver<
                     }
                 }
             },
+            changed = updates.changed(), if updates_open => {
+                if changed.is_ok() {
+                    info!("advertised prefixes changed");
+                    pacer.updated(Instant::now());
+                } else {
+                    // The owner went away: keep advertising what was last set.
+                    updates_open = false;
+                }
+            }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
                     return;
@@ -137,16 +180,16 @@ mod tests {
     use rtnetlink::{LinkUnspec, LinkVeth};
 
     use super::*;
-    use crate::ra::{MAX_INITIAL_RTR_ADVERT_INTERVAL, MIN_DELAY_BETWEEN_RAS, ROUTER_ADVERTISEMENT};
-
-    const SERVER: &str = "owr-ra0";
-    const HOST: &str = "owr-ra1";
+    use crate::ra::{
+        MAX_INITIAL_RTR_ADVERT_INTERVAL, MIN_DELAY_BETWEEN_RAS, ROUTER_ADVERTISEMENT,
+        ROUTER_LIFETIME, router_advertisement,
+    };
 
     /// Deletes the veth pair (both ends) when the test ends, also on failure.
-    struct Veth;
+    struct Veth(&'static str);
     impl Drop for Veth {
         fn drop(&mut self) {
-            let _ = Command::new("ip").args(["link", "del", SERVER]).status();
+            let _ = Command::new("ip").args(["link", "del", self.0]).status();
         }
     }
 
@@ -190,26 +233,24 @@ mod tests {
         .flatten()
     }
 
-    /// The server on one end of a veth pair, a host socket on the other: the first
-    /// advertisement arrives at once with the rendered content and a link-local source, and a
-    /// solicitation is answered at the rate limit rather than at the next 16 s tick.
-    #[tokio::test]
-    async fn advertises_on_the_link_and_answers_solicitations() {
+    /// A veth pair `server` / `host`, both up with a link-local address, and a raw `ICMPv6`
+    /// socket on the host end. `None` when the test cannot run (not root, no `ip`).
+    async fn pair(server: &'static str, host: &'static str) -> Option<(Veth, UdpSocket, u32)> {
         if !rustix::process::geteuid().is_root() || !ip(&["link", "show", "lo"]) {
-            return;
+            return None;
         }
-        let _ = ip(&["link", "del", SERVER]);
+        let _ = ip(&["link", "del", server]);
         // rtnetlink rather than `ip`: BusyBox `ip` ignores the peer name.
         let (conn, handle, _) = rtnetlink::new_connection().unwrap();
         tokio::spawn(conn);
         handle
             .link()
-            .add(LinkVeth::new(SERVER, HOST).build())
+            .add(LinkVeth::new(server, host).build())
             .execute()
             .await
             .unwrap();
-        let _veth = Veth;
-        for link in [SERVER, HOST] {
+        let veth = Veth(server);
+        for link in [server, host] {
             conf(link, "accept_dad", "0");
             // No kernel solicitations: the only one the server sees is the test's.
             conf(link, "router_solicitations", "0");
@@ -217,26 +258,63 @@ mod tests {
             handle.link().set(up).execute().await.unwrap();
         }
         for _ in 0..100 {
-            if has_link_local(SERVER) && has_link_local(HOST) {
+            if has_link_local(server) && has_link_local(host) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        assert!(has_link_local(SERVER) && has_link_local(HOST));
+        assert!(has_link_local(server) && has_link_local(host));
 
-        let host_index = sysfs::ifindex(HOST).unwrap();
-        let host = Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6)).unwrap();
-        host.bind_device(Some(HOST.as_bytes())).unwrap();
-        host.set_multicast_if_v6(host_index).unwrap();
-        host.set_multicast_hops_v6(ND_HOP_LIMIT).unwrap();
-        host.set_nonblocking(true).unwrap();
-        let host = UdpSocket::from_std(host.into()).unwrap();
+        let host_index = sysfs::ifindex(host).unwrap();
+        let socket = Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6)).unwrap();
+        socket.bind_device(Some(host.as_bytes())).unwrap();
+        socket.set_multicast_if_v6(host_index).unwrap();
+        socket.set_multicast_hops_v6(ND_HOP_LIMIT).unwrap();
+        socket.set_nonblocking(true).unwrap();
+        Some((
+            veth,
+            UdpSocket::from_std(socket.into()).unwrap(),
+            host_index,
+        ))
+    }
 
-        let spec = RaSpec {
-            link: SERVER.to_owned(),
+    fn lan_spec(link: &str) -> RaSpec {
+        RaSpec {
+            link: link.to_owned(),
             prefix: "fd00:1:2:3::/64".parse().unwrap(),
             dns: vec!["fd00:1:2:3::1".parse().unwrap()],
+        }
+    }
+
+    /// Router lifetime and the `(prefix length, valid, preferred, prefix)` of every Prefix
+    /// Information option of an advertisement.
+    fn parse_ra(p: &[u8]) -> (u16, Vec<(u8, u32, u32, Ipv6Addr)>) {
+        let lifetime = u16::from_be_bytes([p[6], p[7]]);
+        let mut prefixes = Vec::new();
+        let mut at = 16;
+        while at + 2 <= p.len() {
+            let len = usize::from(p[at + 1]) * 8;
+            if p[at] == 3 {
+                let be = |o: usize| u32::from_be_bytes(p[at + o..at + o + 4].try_into().unwrap());
+                let addr: [u8; 16] = p[at + 16..at + 32].try_into().unwrap();
+                prefixes.push((p[at + 2], be(4), be(8), Ipv6Addr::from(addr)));
+            }
+            at += len;
+        }
+        (lifetime, prefixes)
+    }
+
+    /// The server on one end of a veth pair, a host socket on the other: the first
+    /// advertisement arrives at once with the rendered content and a link-local source, and a
+    /// solicitation is answered at the rate limit rather than at the next 16 s tick.
+    #[tokio::test]
+    async fn advertises_on_the_link_and_answers_solicitations() {
+        const SERVER: &str = "owr-ra0";
+        const HOST: &str = "owr-ra1";
+        let Some((_veth, host, host_index)) = pair(SERVER, HOST).await else {
+            return;
         };
+        let spec = lan_spec(SERVER);
         let expected = router_advertisement(&spec);
         let (stop, shutdown) = watch::channel(false);
         let server = tokio::spawn(run(spec, shutdown));
@@ -263,6 +341,84 @@ mod tests {
                 && gap < MAX_INITIAL_RTR_ADVERT_INTERVAL / 2,
             "answered after {gap:?}"
         );
+
+        stop.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    /// A delegated prefix handed to a running sender shows up on the wire soon, with the
+    /// router as default router; withdrawing it advertises the prefix with lifetimes of zero
+    /// and drops the router lifetime.
+    #[tokio::test]
+    async fn a_delegated_prefix_is_advertised_when_it_arrives_and_deprecated_when_it_goes() {
+        const SERVER: &str = "owr-ra2";
+        const HOST: &str = "owr-ra3";
+        let Some((_veth, host, _)) = pair(SERVER, HOST).await else {
+            return;
+        };
+        let (updates, updates_rx) = watch::channel(RaDynamic::none());
+        let (stop, shutdown) = watch::channel(false);
+        let server = tokio::spawn(run_dynamic(lan_spec(SERVER), updates_rx, shutdown));
+
+        let (first, _) = next_ra(&host, Duration::from_secs(3)).await.unwrap();
+        let (lifetime, prefixes) = parse_ra(&first);
+        assert_eq!(lifetime, 0, "no uplink yet: not a default router");
+        assert_eq!(prefixes.len(), 1);
+
+        let delegated: Ipv6Net = "2001:db8:5:1::/64".parse().unwrap();
+        updates
+            .send(RaDynamic {
+                prefixes: vec![RaPrefix {
+                    prefix: delegated,
+                    valid: Duration::from_secs(7200),
+                    preferred: Duration::from_secs(3600),
+                }],
+                as_of: Instant::now(),
+            })
+            .unwrap();
+        // The next advertisement carries it (held back to 3 s after the previous one).
+        let got = loop {
+            let (ra, _) = next_ra(&host, Duration::from_secs(8)).await.unwrap();
+            let parsed = parse_ra(&ra);
+            if parsed.1.len() == 2 {
+                break parsed;
+            }
+        };
+        assert_eq!(got.0, u16::try_from(ROUTER_LIFETIME.as_secs()).unwrap());
+        let (len, valid, preferred, addr) = got.1[1];
+        assert_eq!((len, addr), (64, delegated.network()));
+        assert!(valid <= 7200 && valid > 7000, "valid {valid}");
+        assert!(
+            preferred <= 3600 && preferred > 3400,
+            "preferred {preferred}"
+        );
+
+        updates
+            .send(RaDynamic {
+                prefixes: vec![RaPrefix {
+                    prefix: delegated,
+                    valid: Duration::ZERO,
+                    preferred: Duration::ZERO,
+                }],
+                as_of: Instant::now(),
+            })
+            .unwrap();
+        let gone = loop {
+            let (ra, _) = next_ra(&host, Duration::from_secs(8)).await.unwrap();
+            let parsed = parse_ra(&ra);
+            if parsed.0 == 0 {
+                break parsed;
+            }
+        };
+        assert_eq!(
+            gone.1.len(),
+            2,
+            "the prefix is still named, with no lifetime"
+        );
+        assert_eq!((gone.1[1].1, gone.1[1].2), (0, 0));
 
         stop.send(true).unwrap();
         tokio::time::timeout(Duration::from_secs(2), server)

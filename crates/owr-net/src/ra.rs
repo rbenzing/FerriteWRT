@@ -1,10 +1,12 @@
 //! IPv6 Router Advertisements for the LAN bridges (RFC 4861): an on-link SLAAC prefix and
 //! the router's DNS address (RDNSS, RFC 8106).
 //!
-//! The router has no IPv6 uplink yet, so it never offers itself as a default router (router
-//! lifetime 0, as RFC 7084 G-4 requires without an upstream default route): hosts configure
-//! an address from the prefix and learn the DNS server, and keep using IPv4 to reach the
-//! internet. M and O are clear because there is no `DHCPv6` server; RDNSS carries DNS.
+//! Without an IPv6 uplink the router never offers itself as a default router (router lifetime
+//! 0, as RFC 7084 G-4 requires without an upstream default route): hosts configure an address
+//! from the ULA prefix and learn the DNS server, and keep using IPv4 to reach the internet.
+//! With a delegated prefix ([`RaDynamic`], from the `DHCPv6` client) the link also advertises a
+//! global /64 and the router becomes the default router. M and O are clear because there is no
+//! `DHCPv6` server; RDNSS carries DNS.
 //!
 //! Pure: packet building, solicitation checks and the send schedule ([`Pacer`]). The socket
 //! lives in `linux::ra`.
@@ -44,6 +46,11 @@ pub const MAX_INITIAL_RTR_ADVERTISEMENTS: u32 = 3;
 pub const MIN_DELAY_BETWEEN_RAS: Duration = Duration::from_secs(3);
 /// Upper bound of the random delay before answering a solicitation (RFC 4861 10).
 pub const MAX_RA_DELAY: Duration = Duration::from_millis(500);
+/// Router lifetime while there is an IPv6 uplink: three times `MaxRtrAdvInterval` (RFC 4861
+/// 6.2.1 allows `MaxRtrAdvInterval` to 9000 s).
+pub const ROUTER_LIFETIME: Duration = Duration::from_mins(30);
+/// At most this many delegated prefixes are advertised on one link besides the spec's own.
+pub const MAX_DYNAMIC_PREFIXES: usize = 4;
 /// RDNSS lifetime: the upper bound RFC 8106 5.1 recommends (2 x `MaxRtrAdvInterval`).
 pub const RDNSS_LIFETIME: Duration = Duration::from_mins(20);
 
@@ -65,6 +72,57 @@ pub struct RaSpec {
     pub prefix: Ipv6Net,
     /// DNS servers announced with RDNSS (at most [`MAX_DNS`]); empty means no RDNSS option.
     pub dns: Vec<Ipv6Addr>,
+}
+
+/// A delegated prefix advertised on a link in addition to [`RaSpec::prefix`]: the lifetimes
+/// are those of the delegation at [`RaDynamic::as_of`] and count down from there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RaPrefix {
+    /// A global /64.
+    pub prefix: Ipv6Net,
+    pub valid: Duration,
+    pub preferred: Duration,
+}
+
+/// What an advertisement sender is told at runtime: the delegated prefixes of its link.
+/// Empty (or all-zero lifetimes) means there is no IPv6 uplink: the router is then not a
+/// default router, and a prefix that was advertised before is advertised once more with
+/// lifetimes of zero so that hosts deprecate it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaDynamic {
+    pub prefixes: Vec<RaPrefix>,
+    /// When the lifetimes held.
+    pub as_of: Instant,
+}
+
+impl RaDynamic {
+    /// No delegated prefix.
+    pub fn none() -> Self {
+        Self {
+            prefixes: Vec::new(),
+            as_of: Instant::now(),
+        }
+    }
+}
+
+impl RaPrefix {
+    /// Check that hosts can configure an address from this prefix on `link`.
+    pub fn validate(&self, link: &str) -> Result<(), RaSpecError> {
+        let net = self.prefix.network();
+        if self.prefix.prefix_len() != SLAAC_PREFIX_LEN {
+            return Err(RaSpecError::PrefixLength {
+                link: link.to_owned(),
+                prefix: self.prefix,
+            });
+        }
+        if !is_unicast(net) || net.is_unicast_link_local() {
+            return Err(RaSpecError::PrefixScope {
+                link: link.to_owned(),
+                prefix: self.prefix,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// An [`RaSpec`] that cannot be advertised.
@@ -123,23 +181,64 @@ fn secs_u32(d: Duration) -> u32 {
 /// the kernel fills it in on raw `ICMPv6` sockets. Call [`RaSpec::validate`] first; the
 /// packet carries at most [`MAX_DNS`] DNS servers whatever the spec holds.
 pub fn router_advertisement(spec: &RaSpec) -> Vec<u8> {
-    let mut p = Vec::with_capacity(RA_HEADER_LEN + 32 + 8 + 16 * MAX_DNS);
-    // type, code, checksum, cur hop limit (0: unspecified), flags (M = O = 0),
-    // router lifetime (0: not a default router), reachable time, retrans timer.
-    p.extend_from_slice(&[ROUTER_ADVERTISEMENT, 0, 0, 0, 0, 0, 0, 0]);
-    p.extend_from_slice(&[0; 8]);
+    build(spec, &[], false)
+}
 
-    // Prefix Information (RFC 4861 4.6.2): 4 units of 8 octets.
+/// [`router_advertisement`] with the delegated prefixes of `dynamic` as they stand at `now`
+/// (at most [`MAX_DYNAMIC_PREFIXES`], their lifetimes reduced by the time since
+/// [`RaDynamic::as_of`]). While one of them is still valid the router is a default router for
+/// [`ROUTER_LIFETIME`]; otherwise the router lifetime is 0 and the prefixes carry lifetimes
+/// of zero, which makes hosts deprecate the addresses they configured from them.
+pub fn router_advertisement_with(spec: &RaSpec, dynamic: &RaDynamic, now: Instant) -> Vec<u8> {
+    let elapsed = now.saturating_duration_since(dynamic.as_of);
+    let live: Vec<(Ipv6Net, u32, u32)> = dynamic
+        .prefixes
+        .iter()
+        .take(MAX_DYNAMIC_PREFIXES)
+        .map(|p| {
+            (
+                p.prefix,
+                secs_u32(p.valid.saturating_sub(elapsed)),
+                secs_u32(p.preferred.saturating_sub(elapsed)),
+            )
+        })
+        .collect();
+    let uplink = live.iter().any(|(_, valid, _)| *valid > 0);
+    build(spec, &live, uplink)
+}
+
+/// One Prefix Information option (RFC 4861 4.6.2): 4 units of 8 octets.
+fn prefix_information(p: &mut Vec<u8>, prefix: Ipv6Net, valid: u32, preferred: u32) {
     p.extend_from_slice(&[
         OPT_PREFIX_INFORMATION,
         4,
-        spec.prefix.prefix_len(),
+        prefix.prefix_len(),
         PREFIX_FLAGS_ON_LINK_AUTONOMOUS,
     ]);
-    p.extend_from_slice(&secs_u32(PREFIX_VALID).to_be_bytes());
-    p.extend_from_slice(&secs_u32(PREFIX_PREFERRED).to_be_bytes());
+    p.extend_from_slice(&valid.to_be_bytes());
+    p.extend_from_slice(&preferred.to_be_bytes());
     p.extend_from_slice(&[0; 4]);
-    p.extend_from_slice(&spec.prefix.network().octets());
+    p.extend_from_slice(&prefix.network().octets());
+}
+
+fn build(spec: &RaSpec, delegated: &[(Ipv6Net, u32, u32)], uplink: bool) -> Vec<u8> {
+    let mut p = Vec::with_capacity(RA_HEADER_LEN.saturating_add(512));
+    // type, code, checksum, cur hop limit (0: unspecified), flags (M = O = 0), router
+    // lifetime (0 unless there is an IPv6 uplink), reachable time, retrans timer.
+    let router_lifetime = if uplink { secs_u32(ROUTER_LIFETIME) } else { 0 };
+    let [_, _, hi, lo] = router_lifetime.to_be_bytes();
+    p.extend_from_slice(&[ROUTER_ADVERTISEMENT, 0, 0, 0, 0, 0, hi, lo]);
+    p.extend_from_slice(&[0; 8]);
+
+    prefix_information(
+        &mut p,
+        spec.prefix,
+        secs_u32(PREFIX_VALID),
+        secs_u32(PREFIX_PREFERRED),
+    );
+    for (prefix, valid, preferred) in delegated {
+        prefix_information(&mut p, *prefix, *valid, *preferred);
+    }
 
     // RDNSS (RFC 8106 5.1): 1 + 2 units per address.
     let dns: Vec<Ipv6Addr> = spec.dns.iter().copied().take(MAX_DNS).collect();
@@ -222,6 +321,18 @@ impl Pacer {
         self.next = later(now, interval);
     }
 
+    /// The advertised content changed at `now` (a delegated prefix came, changed or went):
+    /// advertise it soon (not sooner than [`MIN_DELAY_BETWEEN_RAS`] after the previous one) and
+    /// repeat it at the initial, short intervals so that every host hears it.
+    pub fn updated(&mut self, now: Instant) {
+        self.sent = 0;
+        let mut at = now;
+        if let Some(last) = self.last_sent {
+            at = at.max(later(last, MIN_DELAY_BETWEEN_RAS));
+        }
+        self.next = at;
+    }
+
     /// A solicitation arrived at `now`.
     pub fn solicited(&mut self, now: Instant, rng: &mut impl Rng) {
         let delay = Duration::from_millis(rng.random_range(0..=millis(MAX_RA_DELAY)));
@@ -262,6 +373,150 @@ mod tests {
         u32::from_be_bytes(p[at..at + 4].try_into().unwrap())
     }
 
+    fn delegated(prefix: &str, valid: u64, preferred: u64, as_of: Instant) -> RaDynamic {
+        RaDynamic {
+            prefixes: vec![RaPrefix {
+                prefix: prefix.parse().unwrap(),
+                valid: Duration::from_secs(valid),
+                preferred: Duration::from_secs(preferred),
+            }],
+            as_of,
+        }
+    }
+
+    fn router_lifetime(p: &[u8]) -> u16 {
+        u16::from_be_bytes([p[6], p[7]])
+    }
+
+    #[test]
+    fn without_delegated_prefixes_the_with_variant_is_the_static_advertisement() {
+        let now = Instant::now();
+        let s = spec(&["fd12:3456:789a::1"]);
+        assert_eq!(
+            router_advertisement_with(&s, &RaDynamic::none(), now),
+            router_advertisement(&s)
+        );
+    }
+
+    #[test]
+    fn a_delegated_prefix_is_advertised_and_makes_the_router_a_default_router() {
+        let t0 = Instant::now();
+        let p = router_advertisement_with(
+            &spec(&["fd12:3456:789a::1"]),
+            &delegated("2001:db8:1:2::/64", 7200, 3600, t0),
+            t0,
+        );
+        // header + ULA prefix + delegated prefix + RDNSS
+        assert_eq!(p.len(), 16 + 32 + 32 + 24);
+        assert_eq!(router_lifetime(&p), 1800);
+        assert_eq!(&p[16..20], &[3, 4, 64, 0xc0]);
+        assert_eq!(
+            be32(&p, 20),
+            86_400,
+            "the ULA prefix keeps its own lifetimes"
+        );
+        assert_eq!(&p[48..52], &[3, 4, 64, 0xc0]);
+        assert_eq!(be32(&p, 52), 7200);
+        assert_eq!(be32(&p, 56), 3600);
+        assert_eq!(
+            Ipv6Addr::from(<[u8; 16]>::try_from(&p[64..80]).unwrap()),
+            "2001:db8:1:2::".parse::<Ipv6Addr>().unwrap()
+        );
+        assert_eq!(&p[80..82], &[25, 3]);
+    }
+
+    #[test]
+    fn delegated_lifetimes_count_down_from_when_they_held() {
+        let t0 = Instant::now();
+        let d = delegated("2001:db8:1:2::/64", 7200, 3600, t0);
+        let p = router_advertisement_with(&spec(&[]), &d, t0 + Duration::from_secs(1000));
+        assert_eq!(be32(&p, 52), 6200);
+        assert_eq!(be32(&p, 56), 2600);
+        assert_eq!(router_lifetime(&p), 1800);
+        // preferred ran out first: the prefix is deprecated but still valid, still a router
+        let p = router_advertisement_with(&spec(&[]), &d, t0 + Duration::from_secs(4000));
+        assert_eq!(be32(&p, 52), 3200);
+        assert_eq!(be32(&p, 56), 0);
+        assert_eq!(router_lifetime(&p), 1800);
+        // valid ran out: no uplink any more
+        let p = router_advertisement_with(&spec(&[]), &d, t0 + Duration::from_secs(8000));
+        assert_eq!((be32(&p, 52), be32(&p, 56)), (0, 0));
+        assert_eq!(router_lifetime(&p), 0);
+    }
+
+    #[test]
+    fn a_withdrawn_prefix_is_advertised_with_zero_lifetimes_and_no_router() {
+        let t0 = Instant::now();
+        let p =
+            router_advertisement_with(&spec(&[]), &delegated("2001:db8:1:2::/64", 0, 0, t0), t0);
+        assert_eq!(router_lifetime(&p), 0);
+        assert_eq!((be32(&p, 52), be32(&p, 56)), (0, 0));
+        assert_eq!(&p[48..52], &[3, 4, 64, 0xc0]);
+    }
+
+    #[test]
+    fn no_more_than_the_maximum_of_delegated_prefixes_are_advertised() {
+        let t0 = Instant::now();
+        let many = RaDynamic {
+            prefixes: (0..9)
+                .map(|i| RaPrefix {
+                    prefix: format!("2001:db8:{i}::/64").parse().unwrap(),
+                    valid: Duration::from_secs(100),
+                    preferred: Duration::from_secs(50),
+                })
+                .collect(),
+            as_of: t0,
+        };
+        let p = router_advertisement_with(&spec(&[]), &many, t0);
+        assert_eq!(p.len(), 16 + 32 * (1 + MAX_DYNAMIC_PREFIXES));
+    }
+
+    #[test]
+    fn delegated_prefixes_must_be_global_slash_64s() {
+        let ok = |s: &str| {
+            RaPrefix {
+                prefix: s.parse().unwrap(),
+                valid: Duration::ZERO,
+                preferred: Duration::ZERO,
+            }
+            .validate("br-lan")
+        };
+        assert_eq!(ok("2001:db8:1:2::/64"), Ok(()));
+        assert!(matches!(
+            ok("2001:db8:1::/56"),
+            Err(RaSpecError::PrefixLength { .. })
+        ));
+        assert!(matches!(
+            ok("fe80::/64"),
+            Err(RaSpecError::PrefixScope { .. })
+        ));
+        assert!(matches!(ok("::/64"), Err(RaSpecError::PrefixScope { .. })));
+        assert!(matches!(
+            ok("ff02::/64"),
+            Err(RaSpecError::PrefixScope { .. })
+        ));
+    }
+
+    #[test]
+    fn a_changed_advertisement_restarts_the_quick_schedule_but_is_rate_limited() {
+        let mut rng = StdRng::seed_from_u64(1);
+        let t0 = Instant::now();
+        let mut pacer = Pacer::new(t0);
+        for _ in 0..5 {
+            pacer.sent(t0, &mut rng);
+        }
+        assert!(pacer.due() > t0 + Duration::from_secs(16));
+        // right after an advertisement: held back to the minimum gap
+        pacer.updated(t0 + Duration::from_secs(1));
+        assert_eq!(pacer.due(), t0 + MIN_DELAY_BETWEEN_RAS);
+        // the schedule starts over: the next ones come at the short intervals again
+        pacer.sent(t0 + MIN_DELAY_BETWEEN_RAS, &mut rng);
+        assert!(pacer.due() <= t0 + MIN_DELAY_BETWEEN_RAS + MAX_INITIAL_RTR_ADVERT_INTERVAL);
+        // long after the last one: at once
+        let later = t0 + Duration::from_secs(500);
+        pacer.updated(later);
+        assert_eq!(pacer.due(), later);
+    }
     #[test]
     fn advertisement_layout_matches_rfc_4861_and_8106() {
         let p = router_advertisement(&spec(&["fd12:3456:789a::1"]));

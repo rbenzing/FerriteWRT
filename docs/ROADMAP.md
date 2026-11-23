@@ -37,8 +37,8 @@ Done on `main` since v0.3.0-rc.1, untested on hardware:
 
 Open:
 - WAN IPv6 (in progress): the DHCPv6 prefix-delegation client is built and tested in `owr-net`
-  (replaces the unused `odhcp6c`). Left: router advertisements that carry the delegated prefix
-  (lifetimes capped to the lease, deprecated on loss), the apply step (global /64s on the LAN
+  (replaces the unused `odhcp6c`). The router advertisements carry delegated prefixes at runtime (lifetimes counted down from the
+  lease, deprecated on loss). Left: the apply step (global /64s on the LAN
   bridges, `accept_ra = 2` on the WAN so the ISP's router supplies the default route, `+ipv6`
   for pppd), IPv6 firewall rules (DHCPv6 replies and RAs in, forwarding out).
 - Confine `owr-api`, `owr-apply` and `owr-netd` (they need network administration and

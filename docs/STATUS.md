@@ -14,8 +14,9 @@ touching a router.
   fixes for sandboxed device ioctls and for restarting a service whose config is gone.
   Dependency updates through Dependabot (`.github/dependabot.yml`, netlink crates grouped) and
   CodeQL as an advanced-setup workflow that skips test files. WAN IPv6 is in progress: the
-  DHCPv6 prefix-delegation client exists in `owr-net` (tested on virtual time and over a veth
-  pair); it is not wired into `owr-apply` yet, so `wan.ipv6 = dhcpv6` is still ignored.
+  DHCPv6 prefix-delegation client and the router advertisements that carry a delegated prefix
+  exist in `owr-net` (tested on virtual time and over veth pairs); they are not wired into
+  `owr-apply` yet, so `wan.ipv6 = dhcpv6` is still ignored.
 - **Waiting on the owner:** boot the v0.3.0-rc.1 initramfs image on the Flint 2 with the
   checklist below. If it works, release v0.3.0 (`docs/VERSIONING.md`); anything that
   fails is fixed and shipped as the next `-rc.N`. Optionally cut an rc.2 first so the

@@ -12,7 +12,10 @@ All notable changes to FerriteWRT are recorded here. The format follows
   length, lifetimes), delegated prefixes split into /64s. Tested on virtual time against an
   in-memory server and over a veth pair. Not wired into `owr-apply` yet: `wan.ipv6 = dhcpv6` is
   still ignored until the router advertisements, apply step and firewall rules land.
-- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
+- `owr-net`: router advertisements take delegated prefixes at runtime (`RaDynamic`, `run_dynamic`):
+  they are advertised next to the ULA prefix with lifetimes counted down from the lease, the
+  router becomes the default router while one is valid, and a withdrawn prefix goes out with
+  lifetimes of zero. Tested over a veth pair. Still not wired into `owr-apply`.- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
   `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
   `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
   cryptographic value" alerts were test fixtures, not production code.
