@@ -9,28 +9,25 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [0.3.0-rc.2] - 2026-11-23
 
 ### Added
-- WAN IPv6 in `owr-apply` (`network.wan.ipv6 = dhcpv6`, no longer ignored): the network daemon
-  runs the `DHCPv6` prefix-delegation client; the delegated prefix is split into /64s (`br-lan`
-  is subnet 0, a VLAN bridge the subnet of its VLAN id) whose `::1` addresses are converged
-  together with the `DHCPv4` lease and advertised to the hosts, which then use the router as
-  IPv6 default gateway; a lost delegation is deprecated on the links. The kernel takes the
-  WAN address and default route from the ISP's advertisements (`accept_ra = 2` on the WAN; on
-  `PPPoE` a default of 2 with the LAN bridges set to 0, and `+ipv6` for pppd). Both leases'
-  DNS servers reach `resolv.conf.auto`. The firewall already covers it (DHCPv6 replies and the
-  ISP's router advertisements in, LAN to WAN forwarding for both families, no inbound IPv6 unless
-  a rule asks for it, no IPv6 NAT); a test now pins that. Nothing has run against an ISP.
-- `owr-net`: a `DHCPv6` prefix-delegation client (`dhcp6`, socket in `linux::dhcp6`): Solicit,
-  Request, Renew, Rebind with RFC 8415 timing, replies validated (status codes, prefix scope and
-  length, lifetimes), delegated prefixes split into /64s. Tested on virtual time against an
-  in-memory server and over a veth pair. Not wired into `owr-apply` yet: `wan.ipv6 = dhcpv6` is
-  still ignored until the router advertisements, apply step and firewall rules land.
-- `owr-net`: router advertisements take delegated prefixes at runtime (`RaDynamic`, `run_dynamic`):
-  they are advertised next to the ULA prefix with lifetimes counted down from the lease, the
-  router becomes the default router while one is valid, and a withdrawn prefix goes out with
-  lifetimes of zero. Tested over a veth pair. Still not wired into `owr-apply`.- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
-  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
-  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
-  cryptographic value" alerts were test fixtures, not production code.
+- WAN IPv6 (`network.wan.ipv6 = dhcpv6`, which used to be ignored), end to end in Rust:
+  - `owr-net` has a `DHCPv6` prefix-delegation client (`dhcp6`, socket in `linux::dhcp6`):
+    Solicit, Request, Renew, Rebind with RFC 8415 timing, replies validated (status codes,
+    prefix scope and length, lifetimes), delegated prefixes split into /64s. Tested on virtual
+    time against an in-memory server and over a veth pair.
+  - The router advertisements take delegated prefixes at runtime (`RaDynamic`,
+    `run_dynamic`): they are advertised next to the ULA prefix with lifetimes counted down from
+    the lease, the router becomes the default router while one is valid, and a withdrawn prefix
+    goes out with lifetimes of zero. Tested over a veth pair.
+  - In `owr-apply` the network daemon runs the client; the delegation is split into /64s
+    (`br-lan` is subnet 0, a VLAN bridge the subnet of its VLAN id) whose `::1` addresses are
+    converged together with the `DHCPv4` lease and advertised to the hosts, which then use the
+    router as IPv6 default gateway; a lost delegation is deprecated on the links. The kernel
+    takes the WAN address and default route from the ISP's advertisements (`accept_ra = 2` on
+    the WAN; on `PPPoE` a default of 2 with the LAN bridges set to 0, and `+ipv6` for pppd).
+    Both leases' DNS servers reach `resolv.conf.auto`.
+  - The firewall already covers it (DHCPv6 replies and the ISP's router advertisements in, LAN
+    to WAN forwarding for both families, no inbound IPv6 unless a rule asks for it, no IPv6
+    NAT); a test now pins that. Nothing has run against an ISP.
 - `.github/dependabot.yml`: weekly update PRs for the Cargo graph (minor/patch grouped), the
   GitHub Actions in the workflows, and the build image's base (`build/Dockerfile`).
 - CI loads every rendered firewall ruleset into a real kernel (`scripts/check-nft.sh`, job
@@ -46,9 +43,17 @@ All notable changes to FerriteWRT are recorded here. The format follows
   forwards); the ISP's DNS servers reach dnsmasq through `/etc/ppp/resolv.conf`, which the
   image links into the run directory. `wan.mtu` is pppd's (default 1492); above 1492 the
   WAN port grows to carry it (RFC 4638). `owr-apply render --what pppoe` /
-  `owr render pppoe` show the options with the password hidden. IPv4 only.
+  `owr render pppoe` show the options with the password hidden. IPv6 over PPPoE comes with
+  WAN IPv6 above.
 
 ### Fixed
+- CodeQL stays on GitHub's default setup. An advanced-setup workflow added for a while could not
+  upload its results ("advanced configurations cannot be processed when the default setup is
+  enabled") and is gone again. The 46 "hard-coded cryptographic value" alerts were test
+  fixtures, not production code (dismiss them as "used in tests"); the PPPoE unit tests moved to
+  `crates/owr-apply/src/pppoe_tests.rs`.
+- The changelog of the earlier releases had a stray entry added to each of their "Added"
+  sections by mistake; it is removed and they read as released.
 - `cargo deny` failed on RUSTSEC-2026-0542 (`humantime` declared unmaintained, a notice with no
   fix, used for config duration strings and RFC 3339 times). `deny.toml` carries the one
   documented exception; replacing the crate is queued (STATUS, "Follow-ups queued").
@@ -76,10 +81,6 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [0.3.0-rc.1] - 2026-11-04
 
 ### Added
-- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
-  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
-  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
-  cryptographic value" alerts were test fixtures, not production code.
 - Firmware upgrades from a running router (`crates/owr-upgrade`). A bundle is the release's
   `-sysupgrade.bin`, `SHA256SUMS` and `SHA256SUMS.sig`; it is verified against the release
   key the image ships (`/usr/share/ferritewrt/release.pub`), then the image's hash, its
@@ -153,10 +154,6 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [0.2.0] - 2026-11-03
 
 ### Added
-- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
-  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
-  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
-  cryptographic value" alerts were test fixtures, not production code.
 - Router porting: `docs/PORTING.md` (procedure, support limits, where every board field
   comes from in OpenWrt), `scripts/openwrt-device-facts.sh` (support verdict and every
   hardware fact for one OpenWrt device, plus `--search`), and the `/ferrite-forge` Claude
@@ -213,10 +210,6 @@ First tagged release. Nothing in it has run on hardware yet; the images are for 
 initramfs TFTP test boot described in `docs/STATUS.md`.
 
 ### Added
-- CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
-  `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
-  `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded
-  cryptographic value" alerts were test fixtures, not production code.
 - Phase-1 scaffold for the GL.iNet Flint 2 (GL-MT6000): board descriptor, typed
   configuration, network planner with DHCPv4 client, nftables renderer, hostapd
   renderer and control client, PID 1 supervisor, HTTPS management API with embedded

@@ -13,7 +13,7 @@ touching a router.
   into a real kernel in CI; PPPoE WAN (pppd options, confined `pppoe-wan` service); init
   fixes for sandboxed device ioctls and for restarting a service whose config is gone.
   Dependency updates through Dependabot (`.github/dependabot.yml`, netlink crates grouped) and
-  CodeQL as an advanced-setup workflow that skips test files. WAN IPv6 is built: the DHCPv6
+  CodeQL on GitHub's default setup. WAN IPv6 is built: the DHCPv6
   prefix-delegation client, the advertisements that carry the prefix, the `owr-apply`
   integration and a firewall that already served IPv6 are in and tested (virtual time, veth
   pairs, a real-kernel ruleset load in CI); nothing has run against an ISP. CI had been red
