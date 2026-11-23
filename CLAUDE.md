@@ -34,7 +34,10 @@ no Docker daemon needed). Its output can be long: redirect it to a file in the s
 ## The gate (before every commit)
 
 fmt, clippy with zero warnings on all three targets, host tests, Linux tests, `cargo deny`,
-version compliance. CI (`.github/workflows/ci.yml`) runs the same plus the OpenWrt config
+version compliance. Docs are part of the gate: every
+step that changes behaviour or finishes a piece of the roadmap updates STATUS, ROADMAP, the
+CHANGELOG `[Unreleased]` and the crate README in the same commit, and a step is not done until
+they match the code. CI (`.github/workflows/ci.yml`) runs the same plus the OpenWrt config
 check of every board and `scripts/check-nft.sh` (every rendered firewall ruleset is loaded
 into a real kernel in a network namespace; fixtures in `build/nft-check/`).
 

@@ -5,6 +5,7 @@
 
 mod apply;
 pub mod dhcp;
+pub mod dhcp6;
 mod observe;
 pub mod ra;
 pub mod sysfs;

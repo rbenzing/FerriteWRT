@@ -1,8 +1,8 @@
 # owr-net
 
 Declarative network configuration for FerriteWRT (replaces netifd). Pure planner on
-any host; rtnetlink applier, `DHCPv4` client and IPv6 router advertisements on Linux
-only. `owr-apply netd` runs the client and the advertisements.
+any host; rtnetlink applier, `DHCPv4` and `DHCPv6` prefix-delegation clients and IPv6 router
+advertisements on Linux only. `owr-apply netd` runs the clients and the advertisements.
 
 ## Model
 
@@ -63,6 +63,40 @@ Events are never dropped: the client waits for the consumer (or shutdown).
 the lease the link has no address, and strict reverse-path filtering can drop the
 server's reply to the broadcast DISCOVER. The owner (owr-apply) adds it to
 `NetPlan::sysctls` for every DHCP link.
+
+## DHCPv6 prefix delegation (`dhcp6`; socket in `linux::dhcp6`)
+
+The WAN IPv6 client (RFC 8415). It asks for one `IA_PD` and the DNS servers and nothing
+else: the WAN address and default route come from the ISP's router advertisements, which
+the kernel processes (`owr-apply` sets `accept_ra = 2` on the WAN), and the LAN addresses are
+carved out of the delegated prefix. `Dhcp6ClientSpec { link, identity_link, prefix_len_hint }`:
+`identity_link` is the interface whose hardware address makes the DUID-LL and the IAID, the
+WAN port itself or, under a `PPPoE` interface (which has no address), the physical port.
+
+- **Exchanges**: Solicit, then the Advertise with the highest preference within the first
+  retransmission window (255 wins at once), Request, Reply; Renew at T1, Rebind (no server
+  identifier) at T2, and [`Dhcp6Event::Lost`] when the shortest valid lifetime runs out or the
+  server answers `NoBinding`; then a fresh Solicit. Retransmission follows RFC 8415 section 15
+  (doubling, +-10% jitter; Solicit capped at 120 s instead of an hour so a router without a
+  prefix keeps asking). Events are `Bound` (also for a changed prefix), `Renewed`, `Lost`.
+- **No Release** on shutdown: a reload of the network daemon would hand the prefix back and
+  risk a different one.
+- **Replies are checked** (`analyse`): the transaction id, our DUID, a server identifier, the
+  status codes (message and IA level), our IAID. A prefix is skipped, not fatal, when it is
+  longer than /64 (cannot be split into /64s), link-local, multicast, unspecified, withdrawn
+  (valid 0) or has preferred above valid; host bits are cleared. Without a usable prefix the
+  reply fails. T1/T2 of 0 or T1 above T2 are replaced by 0.5 and 0.8 of the shortest preferred
+  lifetime (a floor of 30 s for T1, never above T2). DNS servers: at most 3, global or
+  unique-local unicast. Packets are bounded (4 KiB, 64 options).
+- `split_into_64s(prefixes, n)` returns the first `n` /64 subnets in order, for the owner to
+  assign to the LAN-side bridges.
+
+`linux::dhcp6::Dhcp6Client::run` binds `[::]:546` to the interface (`SO_BINDTODEVICE`), sends
+to `ff02::1:2` with the interface as the multicast interface, and retries every 5 s while the
+interface or socket is not available (a PPP interface appears only once its session is up).
+Tested over a veth pair as root: the multicast Solicit, the unicast Advertise and Reply to the
+client's link-local address, the Bound event. The state machine runs on virtual time against an
+in-memory server.
 
 ## Router advertisements (`ra`; socket in `linux::ra`)
 

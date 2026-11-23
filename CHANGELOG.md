@@ -7,6 +7,11 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- `owr-net`: a `DHCPv6` prefix-delegation client (`dhcp6`, socket in `linux::dhcp6`): Solicit,
+  Request, Renew, Rebind with RFC 8415 timing, replies validated (status codes, prefix scope and
+  length, lifetimes), delegated prefixes split into /64s. Tested on virtual time against an
+  in-memory server and over a veth pair. Not wired into `owr-apply` yet: `wan.ipv6 = dhcpv6` is
+  still ignored until the router advertisements, apply step and firewall rules land.
 - CodeQL runs as an advanced-setup workflow (`.github/workflows/codeql.yml`) with
   `.github/codeql/codeql-config.yml`, which excludes test files; the PPPoE unit tests moved to
   `crates/owr-apply/src/pppoe_tests.rs` so the exclusion covers them. The "hard-coded

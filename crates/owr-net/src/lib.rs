@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 pub mod dhcp;
+pub mod dhcp6;
 pub mod model;
 pub mod observed;
 pub mod planner;
