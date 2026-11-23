@@ -4,24 +4,18 @@ Where FerriteWRT stands and what the next hardware session must do. Read this be
 touching a router.
 
 ## Resume here
-
-- **Released:** v0.2.1 (latest stable) and **v0.3.0-rc.1** (GitHub pre-release, the image
+- **Released:** v0.2.1 (latest stable) and **v0.3.0-rc.2** (GitHub pre-release, the image
   for the first hardware boot: signed upgrades, confined daemons, the Rust network daemon,
-  the `/sbin/owr-api` fix). Its downloads were checked with `owr release verify` and
-  `owr upgrade --check`.
-- **On `main` since rc.1** (see `CHANGELOG.md` `[Unreleased]`): firewall rulesets loaded
-  into a real kernel in CI; PPPoE WAN (pppd options, confined `pppoe-wan` service); init
-  fixes for sandboxed device ioctls and for restarting a service whose config is gone.
-  Dependency updates through Dependabot (`.github/dependabot.yml`, netlink crates grouped) and
-  CodeQL on GitHub's default setup. WAN IPv6 is built: the DHCPv6
-  prefix-delegation client, the advertisements that carry the prefix, the `owr-apply`
-  integration and a firewall that already served IPv6 are in and tested (virtual time, veth
-  pairs, a real-kernel ruleset load in CI); nothing has run against an ISP. CI had been red
-  since Rust 1.100 (new clippy lint) and a `cargo deny` advisory, both fixed.
-- **Waiting on the owner:** boot the v0.3.0-rc.1 initramfs image on the Flint 2 with the
+  PPPoE, WAN IPv6 with DHCPv6 prefix delegation). Its downloads were checked with
+  `owr release verify` and `owr upgrade --check` (the signature, every hash, and "FerriteWRT
+  0.3.0-rc.2 for glinet_gl-mt6000"). v0.3.0-rc.1 is the earlier pre-release.
+- **On `main` since rc.2** (see `CHANGELOG.md` `[Unreleased]`): the router binaries are
+  static-PIE, checked in CI by starting each under qemu-user; `humantime` is replaced by
+  `owr_common::time` (no `deny.toml` exception left); the kernel version is read from the
+  kernel build tree, so a manifest no longer says `"kernel": "unknown"` (rc.2's does).
+- **Waiting on the owner:** boot the v0.3.0-rc.2 initramfs image on the Flint 2 with the
   checklist below. If it works, release v0.3.0 (`docs/VERSIONING.md`); anything that
-  fails is fixed and shipped as the next `-rc.N`. Optionally cut an rc.2 first so the
-  boot also covers PPPoE.
+  fails is fixed and shipped as the next `-rc.N`.
 - **Next work without hardware**: little is left that can be proven without a router. Confining
   `owr-api` needs privilege separation first (ROADMAP, phase 2); the rest of the open list is
   large (a Rust DHCP/DNS server) or hardware-bound; the image-build items left (busybox trim,
@@ -47,7 +41,7 @@ touching a router.
 | Network daemon (`owr-apply netd`) | Router advertisements checked byte for byte over a veth pair on Linux (WSL), including the rate-limited answer to a solicitation; shutdown on SIGTERM tested; the DHCP lease hand-off reuses the apply path |
 | Cross-compilation | Every binary builds as a static-PIE executable for `aarch64-unknown-linux-musl` with no C toolchain; CI checks the ELF and starts each one under qemu-user (see "Binary hardening") |
 | OpenWrt image build | Runs in the release workflow (Docker); kernel and package config checked line by line; every board's config checked on each push |
-| Releases | v0.2.0, v0.2.1 and the pre-release v0.3.0-rc.1 published by the release workflow: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations. Boot v0.3.0-rc.1 first (see below); v0.3.0 is tagged once it works |
+| Releases | v0.2.0, v0.2.1 and the pre-releases v0.3.0-rc.1 and v0.3.0-rc.2 published by the release workflow: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations. Boot v0.3.0-rc.2 first (see below); v0.3.0 is tagged once it works |
 | Dependency policy | `cargo deny check` clean: no C/asm crates, permissive licenses, no advisories |
 
 Linux-only code paths are exercised by `scripts/linux-tests.sh` (builds the test

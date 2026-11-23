@@ -357,11 +357,18 @@ verify_rootfs() {
 }
 
 # --- (g)(h) collect and summarise ------------------------------------------------
-# Kernel version the images were built with: CONFIG_LINUX_<maj>_<min>=y from .config, patch
-# level from target/linux/generic/kernel-<maj>.<min> ("LINUX_VERSION-6.18 = .60"). "unknown"
-# when either is missing (e.g. a layout change in a newer OpenWrt).
+# Kernel version the images were built with. First choice: the name of the kernel build tree,
+# build_dir/target-*/linux-<target>_<subtarget>/linux-6.18.60, which is the version itself (the
+# same tree verify_kernel_config reads); .config has no CONFIG_LINUX_* symbol for a target's
+# default kernel, which is why the older lookup below gave "unknown" for v0.3.0-rc.1 and -rc.2.
+# Fallback: CONFIG_LINUX_<maj>_<min>=y from .config, patch level from
+# target/linux/generic/kernel-<maj>.<min> ("LINUX_VERSION-6.18 = .60"). "unknown" when neither
+# works (e.g. a layout change in a newer OpenWrt).
 kernel_version() {
-  local ver sub f
+  local ver sub f tree
+  tree=$(find "$OPENWRT_DIR/build_dir" -maxdepth 3 -type d -path "*/linux-${TARGET}_${SUBTARGET}/linux-[0-9]*" -print 2>/dev/null | head -n1 || true)
+  ver=${tree##*/linux-}
+  if [[ $ver =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "$ver"; return 0; fi
   ver=$(sed -n 's/^CONFIG_LINUX_\([0-9][0-9]*\)_\([0-9][0-9]*\)=y$/\1.\2/p' "$OPENWRT_DIR/.config" 2>/dev/null | head -n1 || true)
   [ -n "$ver" ] || { echo unknown; return 0; }
   for f in "$OPENWRT_DIR/target/linux/generic/kernel-$ver" "$OPENWRT_DIR/include/kernel-$ver"; do

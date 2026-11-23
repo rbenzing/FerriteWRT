@@ -24,6 +24,11 @@ All notable changes to FerriteWRT are recorded here. The format follows
   old crate and by round-trip property tests. Slightly stricter, on purpose: `23:59:60` is no
   timestamp. The `deny.toml` exception is gone.
 
+### Fixed
+- The release manifest and `build-info.txt` said `"kernel": "unknown"` (v0.3.0-rc.1 and -rc.2):
+  the image build looked for a `CONFIG_LINUX_*` symbol that OpenWrt does not set for a target's
+  default kernel. It now reads the version from the kernel build tree (`linux-6.18.60`).
+
 ## [0.3.0-rc.2] - 2026-11-23
 
 ### Added
