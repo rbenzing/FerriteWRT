@@ -1131,7 +1131,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "owr-api"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "argon2",
  "axum",
@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "owr-apply"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "clap",
  "insta",
@@ -1199,7 +1199,7 @@ dependencies = [
 
 [[package]]
 name = "owr-board"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "owr-cli"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "argon2",
  "base64",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "owr-common"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "tempfile",
  "thiserror",
@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "owr-config"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "base64",
  "humantime",
@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "owr-fw"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "insta",
  "ipnet",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "owr-init"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "landlock",
  "libc",
@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "owr-net"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "futures-util",
  "ipnet",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "owr-upgrade"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "owr-wifi"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.2"
 dependencies = [
  "insta",
  "owr-common",

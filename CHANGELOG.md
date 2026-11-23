@@ -6,6 +6,8 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0-rc.2] - 2026-11-23
+
 ### Added
 - WAN IPv6 in `owr-apply` (`network.wan.ipv6 = dhcpv6`, no longer ignored): the network daemon
   runs the `DHCPv6` prefix-delegation client; the delegated prefix is split into /64s (`br-lan`
