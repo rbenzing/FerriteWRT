@@ -133,7 +133,7 @@ mod ula_mapping {
             .map(|s| {
                 (
                     s.link.as_str(),
-                    s.prefix.to_string(),
+                    s.prefix.map_or_else(String::new, |p| p.to_string()),
                     s.dns.iter().map(ToString::to_string).collect(),
                 )
             })
@@ -711,5 +711,199 @@ mod ula_file {
         let err = load_or_create(&path, || Err(io::Error::other("no entropy"))).unwrap_err();
         assert!(matches!(err, UlaError::Random(_)));
         assert!(!path.exists());
+    }
+}
+
+mod lease6_persistence {
+    use std::net::Ipv6Addr;
+    use std::time::{Duration, SystemTime};
+
+    use owr_net::dhcp::Lease;
+    use owr_net::dhcp6::{DelegatedPrefix, INFINITE, Lease6};
+
+    use super::*;
+    use crate::lease::{
+        forget_lease6, is_expired6, lease6_path, load_valid_lease6, publish_dns, publish_lease_dns,
+        save_lease, save_lease6, with_persisted_lease, with_persisted_lease6,
+    };
+
+    fn lease6(obtained_at: SystemTime, valid: u32, dns: Vec<Ipv6Addr>) -> Lease6 {
+        Lease6 {
+            prefixes: vec![DelegatedPrefix {
+                prefix: "2001:db8:1::/56".parse().unwrap(),
+                preferred_secs: valid / 2,
+                valid_secs: valid,
+            }],
+            dns,
+            t1: valid / 2,
+            t2: valid.saturating_mul(4) / 5,
+            server_id: vec![0, 3, 0, 1, 0xaa, 0xbb],
+            obtained_at,
+        }
+    }
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(secs))
+            .unwrap()
+    }
+
+    fn wan_ipv6_plans() -> Plans {
+        let mut cfg = defaults();
+        cfg.network.wan.ipv6 = c::WanIpv6::Dhcpv6;
+        plans(&cfg)
+    }
+
+    fn merged(p: &Plans, dir: &std::path::Path, now: SystemTime) -> owr_net::NetPlan {
+        with_persisted_lease6(&p.net, p.netd.dhcp6.as_ref(), &p.netd.pd_links, dir, now)
+    }
+
+    #[test]
+    fn the_delegation_ends_when_the_shortest_valid_lifetime_does() {
+        let mut l = lease6(at(1_000), 600, Vec::new());
+        assert!(!is_expired6(&l, at(1_599)));
+        assert!(is_expired6(&l, at(1_600)));
+        // one prefix outliving the other does not keep the lease alive
+        l.prefixes.push(DelegatedPrefix {
+            prefix: "2001:db8:9::/64".parse().unwrap(),
+            preferred_secs: 1,
+            valid_secs: 5_000,
+        });
+        assert!(is_expired6(&l, at(1_600)));
+        let forever = Lease6 {
+            prefixes: vec![DelegatedPrefix {
+                prefix: "2001:db8:1::/56".parse().unwrap(),
+                preferred_secs: INFINITE,
+                valid_secs: INFINITE,
+            }],
+            ..l
+        };
+        assert!(!is_expired6(&forever, at(u64::from(u32::MAX) * 10)));
+        // no prefix at all is no lease
+        assert!(is_expired6(
+            &Lease6 {
+                prefixes: Vec::new(),
+                ..forever
+            },
+            at(2_000)
+        ));
+    }
+
+    #[test]
+    fn a_saved_prefix_lease_is_loaded_while_valid_forgotten_on_request_and_ignored_when_bad() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = lease6(at(1_000), 600, vec!["2001:db8::53".parse().unwrap()]);
+        assert!(save_lease6(dir.path(), "eth1", &l).unwrap());
+        assert!(!save_lease6(dir.path(), "eth1", &l).unwrap(), "idempotent");
+        assert_eq!(load_valid_lease6(dir.path(), "eth1", at(1_200)), Some(l));
+        assert_eq!(load_valid_lease6(dir.path(), "eth1", at(1_600)), None);
+        assert_eq!(load_valid_lease6(dir.path(), "eth2", at(1_200)), None);
+        assert_eq!(load_valid_lease6(dir.path(), "../evil", at(0)), None);
+        assert!(save_lease6(dir.path(), "../evil", &lease6(at(0), 1, Vec::new())).is_err());
+        // not a v4 lease file
+        assert!(lease6_path(dir.path(), "eth1").ends_with("lease6-eth1.json"));
+        std::fs::write(lease6_path(dir.path(), "eth1"), b"{ not json").unwrap();
+        assert_eq!(load_valid_lease6(dir.path(), "eth1", at(0)), None);
+        assert!(forget_lease6(dir.path(), "eth1").unwrap());
+        assert!(!forget_lease6(dir.path(), "eth1").unwrap(), "already gone");
+    }
+
+    #[test]
+    fn the_persisted_delegation_puts_the_routers_address_on_each_bridge() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = wan_ipv6_plans();
+        assert_eq!(
+            merged(&p, dir.path(), at(10)),
+            p.net,
+            "no lease file: unchanged"
+        );
+        save_lease6(dir.path(), "eth1", &lease6(at(0), 600, Vec::new())).unwrap();
+        let m = merged(&p, dir.path(), at(10));
+        let added: Vec<String> = m
+            .addresses
+            .iter()
+            .filter(|a| !p.net.addresses.contains(a))
+            .map(|a| format!("{} {}", a.link, a.addr))
+            .collect();
+        assert_eq!(added, ["br-lan 2001:db8:1::1/64"]);
+        assert_eq!(merged(&p, dir.path(), at(601)), p.net, "expired: unchanged");
+    }
+
+    #[test]
+    fn without_a_prefix_delegation_client_a_prefix_lease_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        save_lease6(dir.path(), "eth1", &lease6(at(0), 600, Vec::new())).unwrap();
+        let p = plans(&defaults());
+        assert_eq!(merged(&p, dir.path(), at(1)), p.net);
+    }
+
+    #[test]
+    fn both_leases_are_merged_together_so_neither_converge_removes_the_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = wan_ipv6_plans();
+        let v4 = Lease {
+            addr: net("100.64.0.7/24"),
+            routers: vec![Ipv4Addr::new(100, 64, 0, 1)],
+            dns: Vec::new(),
+            domain: None,
+            classless_routes: Vec::new(),
+            lease_secs: 600,
+            t1: 300,
+            t2: 525,
+            server: Ipv4Addr::new(100, 64, 0, 1),
+            obtained_at: at(0),
+        };
+        save_lease(dir.path(), "eth1", &v4).unwrap();
+        save_lease6(dir.path(), "eth1", &lease6(at(0), 600, Vec::new())).unwrap();
+        let both = merged_both(&p, dir.path(), at(10));
+        assert!(
+            both.addresses
+                .iter()
+                .any(|a| a.addr.to_string() == "100.64.0.7/24")
+        );
+        assert!(
+            both.addresses
+                .iter()
+                .any(|a| a.addr.to_string() == "2001:db8:1::1/64")
+        );
+    }
+
+    fn merged_both(p: &Plans, dir: &std::path::Path, now: SystemTime) -> owr_net::NetPlan {
+        let v4 = with_persisted_lease(&p.net, dir, now);
+        with_persisted_lease6(&v4, p.netd.dhcp6.as_ref(), &p.netd.pd_links, dir, now)
+    }
+
+    #[test]
+    fn dns_servers_of_both_leases_are_published_together_v4_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let v4 = Lease {
+            addr: net("100.64.0.7/24"),
+            routers: Vec::new(),
+            dns: vec![Ipv4Addr::new(9, 9, 9, 9)],
+            domain: None,
+            classless_routes: Vec::new(),
+            lease_secs: 600,
+            t1: 300,
+            t2: 525,
+            server: Ipv4Addr::new(100, 64, 0, 1),
+            obtained_at: at(0),
+        };
+        let v6 = lease6(at(0), 600, vec!["2001:db8::53".parse().unwrap()]);
+        let (changed, warning) = publish_dns(dir.path(), Some(&v4), Some(&v6)).unwrap();
+        assert!(changed && warning.is_none());
+        let text = std::fs::read_to_string(dir.path().join(crate::files::RESOLV_AUTO)).unwrap();
+        let servers: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with("nameserver"))
+            .collect();
+        assert_eq!(servers, ["nameserver 9.9.9.9", "nameserver 2001:db8::53"]);
+        // the IPv6 lease alone keeps working, and the IPv4-only wrapper still does too
+        let (changed, _) = publish_dns(dir.path(), None, Some(&v6)).unwrap();
+        assert!(changed);
+        assert!(publish_lease_dns(dir.path(), &v4).unwrap().0);
+        // neither with a server: the file is kept
+        let none = lease6(at(0), 600, Vec::new());
+        let (changed, warning) = publish_dns(dir.path(), None, Some(&none)).unwrap();
+        assert!(!changed && warning.is_some());
     }
 }

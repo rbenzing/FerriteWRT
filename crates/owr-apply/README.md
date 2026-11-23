@@ -2,7 +2,8 @@
 
 Turns `(Board, Config)` into the domain plans of `owr-net`, `owr-fw` and `owr-wifi`, renders
 the configs of the kept daemons (dnsmasq, hostapd) and, on Linux, drives the appliers and runs
-the network daemon (`netd`: WAN DHCPv4 client, IPv6 router advertisements).
+the network daemon (`netd`: WAN DHCPv4 and DHCPv6 prefix-delegation clients, IPv6 router
+advertisements).
 `build_plans` is pure and deterministic (host-tested); `run` is Linux only.
 
 ```
@@ -40,6 +41,7 @@ on stdout, so the supervisor can restart the daemons whose files changed.
 | `firewall.*` | `default_wan_input`, `hw_offload` (wan + lan ports + vlan netdevs), port forwards -> `Redirect` from `wan`, `wan_in` rule -> input rule, `lan_out` rule -> lan to wan |
 | `wireless` radio + AP | `RadioPlan` per enabled radio with APs: `phy<N>`, `wlan<N>`, `wlan<N>-<k>`, bridge `br-lan` or `br-<vlan>` |
 | `dhcp`, pools, leases | `dnsmasq.conf`; pool = network + `start` .. + `limit`, must fit and exclude the router |
+| `network.wan.ipv6 = dhcpv6` | `NetdPlan.dhcp6` (`Dhcp6ClientSpec`: on the WAN port, or on `pppoe-wan` identified by the port's hardware address), `NetdPlan.pd_links` (`br-lan` is subnet 0 of the delegated prefix, a VLAN bridge the subnet of its VLAN id, as with the ULA), `accept_ra = 2` on the WAN port so the kernel uses the ISP's router advertisements (WAN address, default route) although it forwards; on `PPPoE` `default.accept_ra = 2` and `0` on every LAN-side bridge (the interface does not exist yet), and `+ipv6` in pppd's options |
 | `network.lan.ipv6 = ula` | with a ULA prefix (below) `<prefix>::1/64` on `br-lan` and `<prefix>:<vlan id>::1/64` on every VLAN bridge, each advertised by `netd` (`NetdPlan.ra`: the /64, the router address as RDNSS) |
 | fixed list | sysctls (forwarding, rp_filter, syncookies, kptr/dmesg/bpf/ptrace hardening) |
 
@@ -101,6 +103,30 @@ An error while applying is `ApplyError::Partial { outcome, source }`: `outcome` 
 changed (`ApplyError::partial_outcome()`), so a caller can still restart daemons whose files
 changed. It returns which pieces changed (`hostapd_changed`, `dnsmasq_changed`, ...).
 
+
+## WAN IPv6 (DHCPv6 prefix delegation)
+
+With `network.wan.ipv6 = dhcpv6` the network daemon runs the `owr-net` `DHCPv6` client
+(`NetdPlan.dhcp6`) and a router advertisement sender for every bridge with a share
+(`NetdPlan.pd_links`: `br-lan` is /64 number 0 of the delegation, a VLAN bridge the /64 whose
+number is its VLAN id; a delegation too small leaves later bridges without, see `pd::assign`).
+
+- **Lease**: `on_dhcp6_lease` persists the delegation as `<run_dir>/lease6-<link>.json` (0600,
+  tmpfs), merges it with the `DHCPv4` lease (`net_with_leases`: a converge for one never removes
+  what the other set) so every bridge gets `<its /64>::1/64`, converges, and publishes the DNS
+  servers of both leases to `resolv.conf.auto` (IPv4 ones first; a lease without any keeps the
+  file). `apply_all` merges a persisted delegation that has not expired (the shortest valid
+  lifetime). `on_dhcp6_lost` forgets it and converges without the addresses.
+- **Advertisements**: after the addresses are in, each sender is given its share
+  (`pd::ra_dynamic`: the /64 with the lifetimes left, the router address on it as RDNSS), so
+  hosts get a global address and the router as IPv6 default gateway. A renewal only refreshes
+  the lifetimes the sender counts down from; a new or lost prefix wakes it
+  (`pd::needs_advertising`). A lost delegation is advertised once with lifetimes of 0
+  (`pd::ra_withdrawn`). A persisted delegation seeds the senders when the daemon starts, so a
+  restart does not withdraw the router.
+- **WAN side**: the kernel does SLAAC and the default route from the ISP's router advertisement
+  (`accept_ra = 2`, see the mapping table). The client uses the WAN port; over `PPPoE` it uses
+  `pppoe-wan` and takes its DUID from the physical port (PPP has no hardware address).
 ## Idempotence and DHCP leases
 
 `apply_all` twice with the same config reports nothing changed. That includes a DHCP WAN:
@@ -119,12 +145,17 @@ broadcast) to `resolv.conf.auto`; a lease without any keeps the previous file (w
   guest VLAN can query the names of LAN hosts. Per-network views need owr-dns (phase 2).
 - **mt76 quirk**: chosen by `board.wifi.driver` in a fixed list (`mt7915e`, `mt7996e`, `mt7921e`,
   `mt7615e`, `mt7603e`, `mt76x2e`); a field in the board descriptor is the later improvement.
-- **IPv6 is LAN-only (ULA)**: router advertisements carry router lifetime 0, so hosts do not
-  use the router as IPv6 default gateway (there is no WAN IPv6 to route to). No `DHCPv6`
+- **Without `wan.ipv6 = dhcpv6` IPv6 is LAN-only (ULA)**: router advertisements carry router
+  lifetime 0, so hosts do not use the router as IPv6 default gateway. No `DHCPv6`
   server: DNS is announced with RDNSS only.
 - **netd and apply race**: a lease converge in `netd` and an `apply` from the API can overlap.
   `netd` reloads the config for every lease event, and the API restarts `owr-netd` when
   `netd.json` changes, so both converge toward the saved config.
-- **PPPoE** is IPv4 only; `wan.ipv6 = dhcpv6` is ignored (warning) on every WAN protocol.
+- **WAN IPv6 needs the firewall rules** that are still to come: the `DHCPv6` replies and the ISP's
+  router advertisements arrive on the WAN as input, and forwarding between the LAN and the WAN
+  is IPv4 only in the rulesets, so until then the prefix is delegated and advertised but not
+  usable end to end. Not run against an ISP yet (also not over `PPPoE`).
+- The WAN address is the kernel's SLAAC address from the ISP's advertisement (no `IA_NA`); an ISP
+  that requires a `DHCPv6` address is not served.
 - Hostapd configs of radios removed from the config stay in `/run` until reboot; the supervisor
   starts only the radios listed in `hostapd_changed`.

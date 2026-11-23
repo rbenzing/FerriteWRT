@@ -7,6 +7,7 @@ fn plan(password: &str, service: Option<&str>) -> PppoePlan {
         password: Zeroizing::new(password.to_owned()),
         service: service.map(str::to_owned),
         mtu: DEFAULT_MTU,
+        ipv6: false,
     }
 }
 
@@ -67,4 +68,16 @@ fn the_port_mtu_grows_only_for_baby_jumbo_frames() {
     assert_eq!(port_mtu(1492), None);
     assert_eq!(port_mtu(1400), None);
     assert_eq!(port_mtu(1500), Some(1508));
+}
+
+#[test]
+fn ipv6_is_negotiated_only_when_the_wan_asks_for_it() {
+    let without = render_pppoe(&plan("pw", None), true);
+    assert!(!without.lines().any(|l| l == "+ipv6"), "{without}");
+    let mut p = plan("pw", None);
+    p.ipv6 = true;
+    let with = render_pppoe(&p, true);
+    assert!(with.lines().any(|l| l == "+ipv6"), "{with}");
+    // and the hidden rendering for `owr render` carries it too
+    assert!(render_pppoe(&p, false).lines().any(|l| l == "+ipv6"));
 }

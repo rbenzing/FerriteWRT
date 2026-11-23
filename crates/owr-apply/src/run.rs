@@ -23,12 +23,16 @@ use owr_board::Board;
 use owr_common::paths::RUN_DIR;
 use owr_config::{Config, LanIpv6};
 use owr_net::NetPlan;
-use owr_net::dhcp::{Lease, merge_lease};
+use owr_net::dhcp::Lease;
+use owr_net::dhcp6::Lease6;
 use serde::Serialize;
 use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::files::{DaemonFiles, FilesError, write_daemon_files_partial};
-use crate::lease::{forget_lease, publish_lease_dns, save_lease, with_persisted_lease};
+use crate::lease::{
+    forget_lease, forget_lease6, load_valid_lease, load_valid_lease6, publish_dns, save_lease,
+    save_lease6, with_persisted_lease, with_persisted_lease6,
+};
 use crate::steps::{
     Step, apply_steps, critical_links, forwarding_off, is_critical, split_forwarding,
 };
@@ -122,6 +126,8 @@ pub enum ApplyError {
     Signal(#[source] io::Error),
     #[error("the network plan has no DHCP client to attach the lease to")]
     NoDhcpClient,
+    #[error("the network plan has no DHCPv6 client to attach the prefix lease to")]
+    NoDhcp6Client,
     /// `source` stopped [`apply_all`] after `outcome` had been reached: the daemons whose
     /// files changed in `outcome` should still be restarted.
     #[error("{source}")]
@@ -372,7 +378,7 @@ pub async fn apply_all(
     paths: &Paths,
 ) -> Result<ApplyOutcome, ApplyError> {
     let mut plans = plans_for(board, cfg, paths)?;
-    plans.net = with_persisted_lease(&plans.net, &paths.run_dir, SystemTime::now());
+    plans.net = net_with_leases(&plans, paths);
     let mut out = ApplyOutcome {
         warnings: plans.warnings.clone(),
         ..ApplyOutcome::default()
@@ -387,6 +393,21 @@ pub async fn apply_all(
             source: Box::new(source),
         }),
     }
+}
+
+/// The network plan with both persisted leases (`DHCPv4` address and routes, the delegated
+/// prefix's addresses) merged in, so that a converge for one of them keeps what the other
+/// one set.
+fn net_with_leases(plans: &Plans, paths: &Paths) -> NetPlan {
+    let now = SystemTime::now();
+    let with_v4 = with_persisted_lease(&plans.net, &paths.run_dir, now);
+    with_persisted_lease6(
+        &with_v4,
+        plans.netd.dhcp6.as_ref(),
+        &plans.netd.pd_links,
+        &paths.run_dir,
+        now,
+    )
 }
 
 /// A DHCP client reported a lease: persist it (so [`apply_all`] keeps it), merge it into the
@@ -406,14 +427,19 @@ pub async fn on_dhcp_lease(
         .first()
         .ok_or(ApplyError::NoDhcpClient)?;
     save_lease(&paths.run_dir, &spec.link, &lease)?;
-    let merged = merge_lease(&plans.net, spec, &lease);
+    let merged = net_with_leases(&plans, paths);
     // Forwarding is owned by apply_all (it may have been switched off on purpose).
     let (merged, _) = split_forwarding(&merged);
 
     let (net_actions, mut warnings) = converge_net(&merged, &critical_links(&plans))
         .instrument(info_span!("network_lease"))
         .await?;
-    let (resolv_changed, warning) = publish_lease_dns(&paths.run_dir, &lease)?;
+    let v6 = plans
+        .netd
+        .dhcp6
+        .as_ref()
+        .and_then(|c| load_valid_lease6(&paths.run_dir, &c.link, SystemTime::now()));
+    let (resolv_changed, warning) = publish_dns(&paths.run_dir, Some(&lease), v6.as_ref())?;
     warnings.extend(warning);
     Ok(LeaseOutcome {
         net_actions,
@@ -437,9 +463,62 @@ pub async fn on_dhcp_lost(
         .first()
         .ok_or(ApplyError::NoDhcpClient)?;
     forget_lease(&paths.run_dir, &spec.link)?;
-    let (net, _) = split_forwarding(&plans.net);
+    let (net, _) = split_forwarding(&net_with_leases(&plans, paths));
     let (net_actions, warnings) = converge_net(&net, &critical_links(&plans))
         .instrument(info_span!("network_lease_lost"))
+        .await?;
+    Ok(LeaseOutcome {
+        net_actions,
+        resolv_changed: false,
+        warnings,
+    })
+}
+
+/// The `DHCPv6` client was delegated a prefix (or had it renewed): persist the lease, merge the
+/// router's address on every bridge's /64 into the network plan together with the `DHCPv4`
+/// lease, converge, and publish the DNS servers of both leases. The caller tells the router
+/// advertisements ([`crate::pd::assign`] gives the shares).
+pub async fn on_dhcp6_lease(
+    board: &Board,
+    cfg: &Config,
+    lease: Lease6,
+    paths: &Paths,
+) -> Result<LeaseOutcome, ApplyError> {
+    let plans = plans_for(board, cfg, paths)?;
+    let spec = plans.netd.dhcp6.as_ref().ok_or(ApplyError::NoDhcp6Client)?;
+    save_lease6(&paths.run_dir, &spec.link, &lease)?;
+    // Forwarding is owned by apply_all (it may have been switched off on purpose).
+    let (merged, _) = split_forwarding(&net_with_leases(&plans, paths));
+    let (net_actions, mut warnings) = converge_net(&merged, &critical_links(&plans))
+        .instrument(info_span!("network_lease6"))
+        .await?;
+    let v4 = plans
+        .net
+        .dhcp_clients
+        .first()
+        .and_then(|c| load_valid_lease(&paths.run_dir, &c.link, SystemTime::now()));
+    let (resolv_changed, warning) = publish_dns(&paths.run_dir, v4.as_ref(), Some(&lease))?;
+    warnings.extend(warning);
+    Ok(LeaseOutcome {
+        net_actions,
+        resolv_changed,
+        warnings,
+    })
+}
+
+/// The `DHCPv6` client lost its delegation: forget the persisted lease and converge the plan
+/// without it, which removes the global addresses of the bridges (the `DHCPv4` lease stays).
+pub async fn on_dhcp6_lost(
+    board: &Board,
+    cfg: &Config,
+    paths: &Paths,
+) -> Result<LeaseOutcome, ApplyError> {
+    let plans = plans_for(board, cfg, paths)?;
+    let spec = plans.netd.dhcp6.as_ref().ok_or(ApplyError::NoDhcp6Client)?;
+    forget_lease6(&paths.run_dir, &spec.link)?;
+    let (net, _) = split_forwarding(&net_with_leases(&plans, paths));
+    let (net_actions, warnings) = converge_net(&net, &critical_links(&plans))
+        .instrument(info_span!("network_lease6_lost"))
         .await?;
     Ok(LeaseOutcome {
         net_actions,

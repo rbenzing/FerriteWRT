@@ -6,10 +6,12 @@ use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use owr_board::Board;
 use owr_config::{Config, LanIpv6, WanIpv6, WanProto};
 use owr_net::dhcp::dhcp_link_sysctls;
+use owr_net::dhcp6::Dhcp6ClientSpec;
 use owr_net::model::TABLE_MAIN;
 use owr_net::{AddrSpec, DhcpClientSpec, LinkSpec, MacAddr, NetPlan, RouteProto, RouteSpec};
 
 use crate::error::MapError;
+use crate::pd::PdLink;
 use crate::pppoe;
 use crate::topology::{LAN_BRIDGE, Topology};
 
@@ -97,6 +99,54 @@ fn active_ula(
         );
     }
     prefix
+}
+
+/// The sysctls that make the kernel use the ISP's router advertisements for the WAN address and
+/// the default route. With forwarding on the kernel ignores them unless `accept_ra` is 2.
+///
+/// A `PPPoE` interface does not exist yet when the plan is applied and must not start with
+/// `accept_ra` 1 (its link-local address would complete duplicate address detection, and
+/// solicit nothing, before anything could change it): there the default for new interfaces is 2
+/// and every LAN-side bridge, which is created from that default, is set back to 0 (the router
+/// listens to no router on the LAN).
+fn wan_ipv6_sysctls(proto: &WanProto, topo: &Topology<'_>) -> Vec<(String, String)> {
+    let key = |link: &str| format!("net.ipv6.conf.{link}.accept_ra");
+    if matches!(proto, WanProto::Pppoe { .. }) {
+        let mut out = vec![(key("default"), "2".to_owned())];
+        out.push((key(LAN_BRIDGE), "0".to_owned()));
+        out.extend(topo.vlans.iter().map(|v| (key(&v.bridge), "0".to_owned())));
+        out
+    } else {
+        vec![(key(topo.wan_dev), "2".to_owned())]
+    }
+}
+
+/// The `DHCPv6` prefix-delegation client of a WAN with `wan.ipv6 = dhcpv6`. It runs on the PPP
+/// interface of a `PPPoE` WAN (identified by the physical port's hardware address, PPP has
+/// none) and on the WAN port otherwise.
+pub(crate) fn dhcp6_spec(cfg: &Config, topo: &Topology<'_>) -> Option<Dhcp6ClientSpec> {
+    (cfg.network.wan.ipv6 == WanIpv6::Dhcpv6).then(|| Dhcp6ClientSpec {
+        link: match cfg.network.wan.proto {
+            WanProto::Pppoe { .. } => pppoe::PPPOE_IFNAME.to_owned(),
+            WanProto::Dhcp { .. } | WanProto::Static { .. } => topo.wan_dev.to_owned(),
+        },
+        identity_link: topo.wan_dev.to_owned(),
+        prefix_len_hint: None,
+    })
+}
+
+/// The bridges that take a /64 of a delegated prefix: `br-lan` is subnet 0, a VLAN bridge the
+/// subnet of its VLAN id (the ULA convention).
+pub(crate) fn pd_links(topo: &Topology<'_>) -> Vec<PdLink> {
+    let mut links = vec![PdLink {
+        link: LAN_BRIDGE.to_owned(),
+        subnet: 0,
+    }];
+    links.extend(topo.vlans.iter().map(|v| PdLink {
+        link: v.bridge.clone(),
+        subnet: v.cfg.id,
+    }));
+    links
 }
 
 pub(crate) fn build_net(
@@ -214,7 +264,7 @@ pub(crate) fn build_net(
         WanProto::Pppoe { .. } => {}
     }
     if net.wan.ipv6 == WanIpv6::Dhcpv6 {
-        tracing::warn!("network.wan.ipv6 = dhcpv6 is not implemented yet and is ignored");
+        plan.sysctls.extend(wan_ipv6_sysctls(&net.wan.proto, topo));
     }
     Ok(plan)
 }

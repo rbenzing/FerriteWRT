@@ -58,13 +58,14 @@ pub(super) fn resolve_device(source: &str, disk: Option<&str>) -> Result<String,
     };
     let step = format!("resolve PARTLABEL={label}");
     for _ in 0..DEVICE_WAIT_ATTEMPTS {
-        let uevents: Vec<String> = fs::read_dir("/sys/class/block")
-            .map(|rd| {
+        let uevents: Vec<String> = fs::read_dir("/sys/class/block").map_or_else(
+            |_| Vec::new(),
+            |rd| {
                 rd.filter_map(Result::ok)
                     .filter_map(|e| fs::read_to_string(e.path().join("uevent")).ok())
                     .collect()
-            })
-            .unwrap_or_default();
+            },
+        );
         match resolve_partlabel(uevents.iter().map(String::as_str), label, disk) {
             Ok(dev) if Path::new(&dev).exists() => return Ok(dev),
             Ok(_) | Err(PartlabelError::NotFound) => {}

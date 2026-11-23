@@ -309,10 +309,9 @@ pub(super) fn run() -> ExitCode {
         failsafe: decision.mode == BootMode::Failsafe,
         apply_present: Path::new(APPLY_BIN).exists(),
         ssh_enabled: Path::new(&ssh_enabled_marker()).exists(),
-        radio_phys: board
-            .as_ref()
-            .map(|b| b.wifi.radios.iter().map(|r| r.phy_index).collect())
-            .unwrap_or_default(),
+        radio_phys: board.as_ref().map_or_else(Vec::new, |b| {
+            b.wifi.radios.iter().map(|r| r.phy_index).collect()
+        }),
         sandbox: !Path::new(&sandbox::disable_marker()).exists(),
     };
     let persistent = data_ok && decision.mode == BootMode::Normal;

@@ -76,7 +76,7 @@ fn iface(link: &ObservedLink, role: Option<String>, obs: &Observed) -> Iface {
         up: link.up,
         carrier: link.carrier,
         speed_mbps: link.speed_mbps,
-        mac: link.mac.map(|m| m.to_string()).unwrap_or_default(),
+        mac: link.mac.map_or_else(String::new, |m| m.to_string()),
         ipv4: addrs(true),
         ipv6: addrs(false),
         rx_bytes: link.stats.rx_bytes,
@@ -124,8 +124,7 @@ pub fn wan_status(
             gateway: l
                 .routers
                 .first()
-                .map(ToString::to_string)
-                .unwrap_or_default(),
+                .map_or_else(String::new, ToString::to_string),
             dns: l.dns.iter().map(ToString::to_string).collect(),
             uptime_secs: now.duration_since(l.obtained_at).map_or(0, |d| d.as_secs()),
         }),
@@ -161,7 +160,7 @@ pub fn wan_status(
                 }
                 .to_owned(),
                 addr: addr.addr.to_string(),
-                gateway: gateway.map(|g| g.to_string()).unwrap_or_default(),
+                gateway: gateway.map_or_else(String::new, |g| g.to_string()),
                 dns: Vec::new(),
                 uptime_secs: 0,
             })
@@ -240,8 +239,7 @@ pub fn wireless_status<S: std::hash::BuildHasher>(
                 ssid: ap.ssid.clone(),
                 bssid: status
                     .and_then(|s| s.bssid)
-                    .map(|m| m.to_string())
-                    .unwrap_or_default(),
+                    .map_or_else(String::new, |m| m.to_string()),
                 clients,
             });
         }

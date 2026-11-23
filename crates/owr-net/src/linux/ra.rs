@@ -74,7 +74,7 @@ pub async fn run_dynamic(
     mut updates: watch::Receiver<RaDynamic>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let span = info_span!("ra", link = %spec.link, prefix = %spec.prefix);
+    let span = info_span!("ra", link = %spec.link, prefix = ?spec.prefix);
     async move {
         if let Err(e) = spec.validate() {
             error!(error = %e, "not advertising");
@@ -281,7 +281,7 @@ mod tests {
     fn lan_spec(link: &str) -> RaSpec {
         RaSpec {
             link: link.to_owned(),
-            prefix: "fd00:1:2:3::/64".parse().unwrap(),
+            prefix: Some("fd00:1:2:3::/64".parse().unwrap()),
             dns: vec!["fd00:1:2:3::1".parse().unwrap()],
         }
     }
@@ -376,6 +376,7 @@ mod tests {
                     valid: Duration::from_secs(7200),
                     preferred: Duration::from_secs(3600),
                 }],
+                dns: Vec::new(),
                 as_of: Instant::now(),
             })
             .unwrap();
@@ -403,6 +404,7 @@ mod tests {
                     valid: Duration::ZERO,
                     preferred: Duration::ZERO,
                 }],
+                dns: Vec::new(),
                 as_of: Instant::now(),
             })
             .unwrap();

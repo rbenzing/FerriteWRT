@@ -281,10 +281,7 @@ impl Fixture {
     }
 
     fn requests(&self) -> Vec<String> {
-        self.init
-            .as_ref()
-            .map(FakeInit::requests)
-            .unwrap_or_default()
+        self.init.as_ref().map_or_else(Vec::new, FakeInit::requests)
     }
 
     fn file(&self) -> Vec<u8> {

@@ -119,8 +119,7 @@ impl Config {
         let wan_port = board
             .wan_ports()
             .next()
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
+            .map_or_else(String::new, |p| p.name.clone());
         let radios = board
             .wifi
             .radios

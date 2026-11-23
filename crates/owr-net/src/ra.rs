@@ -68,8 +68,9 @@ const RS_HEADER_LEN: usize = 8;
 pub struct RaSpec {
     /// Interface the advertisements go out on (a LAN or VLAN bridge).
     pub link: String,
-    /// On-link prefix hosts configure addresses from; a /64.
-    pub prefix: Ipv6Net,
+    /// On-link prefix hosts configure addresses from; a /64. `None` on a link that only has
+    /// delegated prefixes (no ULA).
+    pub prefix: Option<Ipv6Net>,
     /// DNS servers announced with RDNSS (at most [`MAX_DNS`]); empty means no RDNSS option.
     pub dns: Vec<Ipv6Addr>,
 }
@@ -91,6 +92,9 @@ pub struct RaPrefix {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RaDynamic {
     pub prefixes: Vec<RaPrefix>,
+    /// Router addresses on the delegated prefixes, announced with RDNSS (after the spec's own,
+    /// at most [`MAX_DNS`] in all) while one of the prefixes is valid.
+    pub dns: Vec<Ipv6Addr>,
     /// When the lifetimes held.
     pub as_of: Instant,
 }
@@ -100,6 +104,7 @@ impl RaDynamic {
     pub fn none() -> Self {
         Self {
             prefixes: Vec::new(),
+            dns: Vec::new(),
             as_of: Instant::now(),
         }
     }
@@ -146,18 +151,20 @@ impl RaSpec {
     /// Check that hosts can use what this spec advertises.
     pub fn validate(&self) -> Result<(), RaSpecError> {
         let link = || self.link.clone();
-        if self.prefix.prefix_len() != SLAAC_PREFIX_LEN {
-            return Err(RaSpecError::PrefixLength {
-                link: link(),
-                prefix: self.prefix,
-            });
-        }
-        let net = self.prefix.network();
-        if !is_unicast(net) || net.is_unicast_link_local() {
-            return Err(RaSpecError::PrefixScope {
-                link: link(),
-                prefix: self.prefix,
-            });
+        if let Some(prefix) = self.prefix {
+            if prefix.prefix_len() != SLAAC_PREFIX_LEN {
+                return Err(RaSpecError::PrefixLength {
+                    link: link(),
+                    prefix,
+                });
+            }
+            let net = prefix.network();
+            if !is_unicast(net) || net.is_unicast_link_local() {
+                return Err(RaSpecError::PrefixScope {
+                    link: link(),
+                    prefix,
+                });
+            }
         }
         if self.dns.len() > MAX_DNS {
             return Err(RaSpecError::TooManyDns {
@@ -181,7 +188,7 @@ fn secs_u32(d: Duration) -> u32 {
 /// the kernel fills it in on raw `ICMPv6` sockets. Call [`RaSpec::validate`] first; the
 /// packet carries at most [`MAX_DNS`] DNS servers whatever the spec holds.
 pub fn router_advertisement(spec: &RaSpec) -> Vec<u8> {
-    build(spec, &[], false)
+    build(spec, &[], false, &[])
 }
 
 /// [`router_advertisement`] with the delegated prefixes of `dynamic` as they stand at `now`
@@ -204,7 +211,8 @@ pub fn router_advertisement_with(spec: &RaSpec, dynamic: &RaDynamic, now: Instan
         })
         .collect();
     let uplink = live.iter().any(|(_, valid, _)| *valid > 0);
-    build(spec, &live, uplink)
+    let extra: &[Ipv6Addr] = if uplink { &dynamic.dns } else { &[] };
+    build(spec, &live, uplink, extra)
 }
 
 /// One Prefix Information option (RFC 4861 4.6.2): 4 units of 8 octets.
@@ -221,7 +229,12 @@ fn prefix_information(p: &mut Vec<u8>, prefix: Ipv6Net, valid: u32, preferred: u
     p.extend_from_slice(&prefix.network().octets());
 }
 
-fn build(spec: &RaSpec, delegated: &[(Ipv6Net, u32, u32)], uplink: bool) -> Vec<u8> {
+fn build(
+    spec: &RaSpec,
+    delegated: &[(Ipv6Net, u32, u32)],
+    uplink: bool,
+    extra_dns: &[Ipv6Addr],
+) -> Vec<u8> {
     let mut p = Vec::with_capacity(RA_HEADER_LEN.saturating_add(512));
     // type, code, checksum, cur hop limit (0: unspecified), flags (M = O = 0), router
     // lifetime (0 unless there is an IPv6 uplink), reachable time, retrans timer.
@@ -230,18 +243,25 @@ fn build(spec: &RaSpec, delegated: &[(Ipv6Net, u32, u32)], uplink: bool) -> Vec<
     p.extend_from_slice(&[ROUTER_ADVERTISEMENT, 0, 0, 0, 0, 0, hi, lo]);
     p.extend_from_slice(&[0; 8]);
 
-    prefix_information(
-        &mut p,
-        spec.prefix,
-        secs_u32(PREFIX_VALID),
-        secs_u32(PREFIX_PREFERRED),
-    );
+    if let Some(prefix) = spec.prefix {
+        prefix_information(
+            &mut p,
+            prefix,
+            secs_u32(PREFIX_VALID),
+            secs_u32(PREFIX_PREFERRED),
+        );
+    }
     for (prefix, valid, preferred) in delegated {
         prefix_information(&mut p, *prefix, *valid, *preferred);
     }
 
     // RDNSS (RFC 8106 5.1): 1 + 2 units per address.
-    let dns: Vec<Ipv6Addr> = spec.dns.iter().copied().take(MAX_DNS).collect();
+    let mut dns: Vec<Ipv6Addr> = Vec::new();
+    for addr in spec.dns.iter().chain(extra_dns) {
+        if dns.len() < MAX_DNS && !dns.contains(addr) {
+            dns.push(*addr);
+        }
+    }
     if let Ok(count) = u8::try_from(dns.len())
         && count > 0
     {
@@ -364,7 +384,7 @@ mod tests {
     fn spec(dns: &[&str]) -> RaSpec {
         RaSpec {
             link: "br-lan".to_owned(),
-            prefix: "fd12:3456:789a::/64".parse().unwrap(),
+            prefix: Some("fd12:3456:789a::/64".parse().unwrap()),
             dns: dns.iter().map(|d| d.parse().unwrap()).collect(),
         }
     }
@@ -380,6 +400,7 @@ mod tests {
                 valid: Duration::from_secs(valid),
                 preferred: Duration::from_secs(preferred),
             }],
+            dns: Vec::new(),
             as_of,
         }
     }
@@ -465,6 +486,7 @@ mod tests {
                     preferred: Duration::from_secs(50),
                 })
                 .collect(),
+            dns: Vec::new(),
             as_of: t0,
         };
         let p = router_advertisement_with(&spec(&[]), &many, t0);
@@ -497,6 +519,58 @@ mod tests {
         ));
     }
 
+    fn rdnss(p: &[u8]) -> Vec<Ipv6Addr> {
+        let mut at = 16;
+        while at + 2 <= p.len() {
+            let len = usize::from(p[at + 1]) * 8;
+            if p[at] == OPT_RDNSS {
+                return p[at + 8..at + len]
+                    .as_chunks::<16>()
+                    .0
+                    .iter()
+                    .map(|c| Ipv6Addr::from(*c))
+                    .collect();
+            }
+            at += len;
+        }
+        Vec::new()
+    }
+
+    #[test]
+    fn a_link_without_a_ula_advertises_only_the_delegated_prefix() {
+        let t0 = Instant::now();
+        let mut s = spec(&[]);
+        s.prefix = None;
+        assert_eq!(s.validate(), Ok(()));
+        let p = router_advertisement_with(&s, &delegated("2001:db8:1:2::/64", 7200, 3600, t0), t0);
+        assert_eq!(p.len(), 16 + 32);
+        assert_eq!(&p[16..20], &[3, 4, 64, 0xc0]);
+        assert_eq!(be32(&p, 20), 7200);
+        // and without any prefix at all, only the header is left
+        assert_eq!(router_advertisement(&s).len(), 16);
+    }
+
+    #[test]
+    fn router_addresses_on_delegated_prefixes_join_rdnss_only_while_there_is_an_uplink() {
+        let t0 = Instant::now();
+        let ula: Ipv6Addr = "fd12:3456:789a::1".parse().unwrap();
+        let global: Ipv6Addr = "2001:db8:1:2::1".parse().unwrap();
+        let mut d = delegated("2001:db8:1:2::/64", 7200, 3600, t0);
+        d.dns = vec![
+            global,
+            ula,
+            "2001:db8::a".parse().unwrap(),
+            "2001:db8::b".parse().unwrap(),
+        ];
+        let p = router_advertisement_with(&spec(&["fd12:3456:789a::1"]), &d, t0);
+        // the spec's own first, no duplicates, at most MAX_DNS
+        assert_eq!(rdnss(&p), vec![ula, global, "2001:db8::a".parse().unwrap()]);
+        // the delegation is gone: back to the spec's own servers
+        let mut gone = delegated("2001:db8:1:2::/64", 0, 0, t0);
+        gone.dns = vec![global];
+        let p = router_advertisement_with(&spec(&["fd12:3456:789a::1"]), &gone, t0);
+        assert_eq!(rdnss(&p), vec![ula]);
+    }
     #[test]
     fn a_changed_advertisement_restarts_the_quick_schedule_but_is_rate_limited() {
         let mut rng = StdRng::seed_from_u64(1);
@@ -547,7 +621,7 @@ mod tests {
     #[test]
     fn the_prefix_is_masked_and_rdnss_is_omitted_without_dns() {
         let mut s = spec(&[]);
-        s.prefix = "fd12:3456:789a:0:dead::1/64".parse().unwrap();
+        s.prefix = Some("fd12:3456:789a:0:dead::1/64".parse().unwrap());
         let p = router_advertisement(&s);
         assert_eq!(p.len(), 16 + 32);
         assert_eq!(&p[32..40], &[0xfd, 0x12, 0x34, 0x56, 0x78, 0x9a, 0, 0]);
@@ -565,13 +639,13 @@ mod tests {
     fn validation_rejects_what_hosts_cannot_use() {
         assert_eq!(spec(&["fd00::1"]).validate(), Ok(()));
         let mut s = spec(&[]);
-        s.prefix = "fd12:3456:789a::/48".parse().unwrap();
+        s.prefix = Some("fd12:3456:789a::/48".parse().unwrap());
         assert!(matches!(
             s.validate(),
             Err(RaSpecError::PrefixLength { .. })
         ));
         for bad in ["fe80::/64", "ff02::/64", "::/64"] {
-            s.prefix = bad.parse().unwrap();
+            s.prefix = Some(bad.parse().unwrap());
             assert!(
                 matches!(s.validate(), Err(RaSpecError::PrefixScope { .. })),
                 "{bad}"

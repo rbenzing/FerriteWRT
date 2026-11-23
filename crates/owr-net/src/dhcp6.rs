@@ -451,18 +451,15 @@ pub fn analyse(
         t1_secs = fraction(shortest_preferred, 1, 2);
         t2_secs = fraction(shortest_preferred, 4, 5);
     }
-    let dns = msg
-        .option(OPT_DNS_SERVERS)
-        .map(|v| {
-            v.as_chunks::<16>()
-                .0
-                .iter()
-                .map(|c| Ipv6Addr::from(*c))
-                .filter(|a| usable_prefix(*a))
-                .take(MAX_DNS)
-                .collect()
-        })
-        .unwrap_or_default();
+    let dns = msg.option(OPT_DNS_SERVERS).map_or_else(Vec::new, |v| {
+        v.as_chunks::<16>()
+            .0
+            .iter()
+            .map(|c| Ipv6Addr::from(*c))
+            .filter(|a| usable_prefix(*a))
+            .take(MAX_DNS)
+            .collect()
+    });
     let preference = msg
         .option(OPT_PREFERENCE)
         .and_then(|v| v.first().copied())

@@ -108,8 +108,7 @@ fn current_content_matches(target: &Path, content: &[u8]) -> bool {
 fn temp_sibling(target: &Path) -> PathBuf {
     let name = target
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     let nonce = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

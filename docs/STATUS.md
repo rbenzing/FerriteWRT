@@ -14,9 +14,10 @@ touching a router.
   fixes for sandboxed device ioctls and for restarting a service whose config is gone.
   Dependency updates through Dependabot (`.github/dependabot.yml`, netlink crates grouped) and
   CodeQL as an advanced-setup workflow that skips test files. WAN IPv6 is in progress: the
-  DHCPv6 prefix-delegation client and the router advertisements that carry a delegated prefix
-  exist in `owr-net` (tested on virtual time and over veth pairs); they are not wired into
-  `owr-apply` yet, so `wan.ipv6 = dhcpv6` is still ignored.
+  DHCPv6 prefix-delegation client, the advertisements that carry the prefix and the
+  `owr-apply` integration exist and are tested (virtual time, veth pairs); the IPv6 firewall
+  rules are the missing piece before it works end to end. CI had been red since Rust 1.100
+  (new clippy lint), fixed.
 - **Waiting on the owner:** boot the v0.3.0-rc.1 initramfs image on the Flint 2 with the
   checklist below. If it works, release v0.3.0 (`docs/VERSIONING.md`); anything that
   fails is fixed and shipped as the next `-rc.N`. Optionally cut an rc.2 first so the
@@ -113,6 +114,9 @@ patch release.
 
 ## Follow-ups queued
 
+- Replace `humantime` (config duration strings, RFC 3339 in `owr release`): RUSTSEC-2026-0542
+  marks it unmaintained and `deny.toml` carries the one exception. The replacement must read
+  every duration the current config format accepts and write the same strings back.
 - The phase 2 list in [ROADMAP.md](ROADMAP.md).
 - First upgrade on hardware: from a flashed v0.3.0 or later, upgrade to the next release
   through the UI and through `owr upgrade`; watch the console for the prune, the three

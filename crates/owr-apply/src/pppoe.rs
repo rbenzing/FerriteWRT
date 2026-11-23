@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use owr_config::{Config, WanProto};
+use owr_config::{Config, WanIpv6, WanProto};
 use zeroize::Zeroizing;
 
 use crate::error::MapError;
@@ -38,6 +38,9 @@ pub struct PppoePlan {
     pub service: Option<String>,
     /// PPP MTU and MRU.
     pub mtu: u16,
+    /// Negotiate IPv6 on the link (`wan.ipv6 = dhcpv6`): pppd brings up a link-local address,
+    /// the ISP's router advertisements and the `DHCPv6` client do the rest.
+    pub ipv6: bool,
 }
 
 impl fmt::Debug for PppoePlan {
@@ -48,6 +51,7 @@ impl fmt::Debug for PppoePlan {
             .field("password", &"***")
             .field("service", &self.service)
             .field("mtu", &self.mtu)
+            .field("ipv6", &self.ipv6)
             .finish()
     }
 }
@@ -98,6 +102,7 @@ pub(crate) fn build_pppoe(cfg: &Config, wan_dev: &str) -> Result<Option<PppoePla
         password: Zeroizing::new(password.expose().to_owned()),
         service: service.clone(),
         mtu: cfg.network.wan.mtu.unwrap_or(DEFAULT_MTU),
+        ipv6: cfg.network.wan.ipv6 == WanIpv6::Dhcpv6,
     }))
 }
 
@@ -125,6 +130,9 @@ pub fn render_pppoe(plan: &PppoePlan, reveal: bool) -> String {
     ];
     if let Some(service) = &plan.service {
         l.push(format!("rp_pppoe_service {}", quote(service)));
+    }
+    if plan.ipv6 {
+        l.push("+ipv6".to_owned());
     }
     l.extend([
         // The ISP is not asked to authenticate itself to the router.

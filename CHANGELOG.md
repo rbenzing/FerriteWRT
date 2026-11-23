@@ -7,6 +7,15 @@ All notable changes to FerriteWRT are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- WAN IPv6 in `owr-apply` (`network.wan.ipv6 = dhcpv6`, no longer ignored): the network daemon
+  runs the `DHCPv6` prefix-delegation client; the delegated prefix is split into /64s (`br-lan`
+  is subnet 0, a VLAN bridge the subnet of its VLAN id) whose `::1` addresses are converged
+  together with the `DHCPv4` lease and advertised to the hosts, which then use the router as
+  IPv6 default gateway; a lost delegation is deprecated on the links. The kernel takes the
+  WAN address and default route from the ISP's advertisements (`accept_ra = 2` on the WAN; on
+  `PPPoE` a default of 2 with the LAN bridges set to 0, and `+ipv6` for pppd). Both leases'
+  DNS servers reach `resolv.conf.auto`. The firewall rules for IPv6 are still to come, so
+  this is not usable end to end yet; nothing has run against an ISP.
 - `owr-net`: a `DHCPv6` prefix-delegation client (`dhcp6`, socket in `linux::dhcp6`): Solicit,
   Request, Renew, Rebind with RFC 8415 timing, replies validated (status codes, prefix scope and
   length, lifetimes), delegated prefixes split into /64s. Tested on virtual time against an
@@ -37,6 +46,14 @@ All notable changes to FerriteWRT are recorded here. The format follows
   `owr render pppoe` show the options with the password hidden. IPv4 only.
 
 ### Fixed
+- `cargo deny` failed on RUSTSEC-2026-0542 (`humantime` declared unmaintained, a notice with no
+  fix, used for config duration strings and RFC 3339 times). `deny.toml` carries the one
+  documented exception; replacing the crate is queued (STATUS, "Follow-ups queued").
+- CI was red on every push since Rust 1.100.0 (2026-11-09; CI tracks `stable`): its clippy flags
+  `Option::map(..).unwrap_or_default()` (`map_unwrap_or`), which `-D warnings` makes an error in
+  the host, aarch64 and test jobs. Fixed at every site with `map_or_else` (not `map_or_default`,
+  which would raise the MSRV past 1.99). The workspace manifest no longer lists dependencies no
+  crate uses, and `tracing` is a Linux-only dependency of `owr-fw`, the only place it is used.
 - Dependency updates merged from Dependabot: `toml` 1.2, `tower-http` 0.7, `rtnetlink` 0.24
   with `netlink-packet-route` 0.34, and `argon2` 0.6 with `password-hash` 0.6 (the salt is now
   drawn by the library from the OS RNG; hash parameters and the PHC policy are unchanged, and the

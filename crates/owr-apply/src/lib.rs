@@ -15,6 +15,7 @@ mod dnsmasq;
 mod error;
 mod fw;
 mod net;
+pub mod pd;
 pub mod pppoe;
 mod topology;
 mod wifi;
@@ -103,7 +104,12 @@ pub fn build_plans_with(board: &Board, cfg: &Config, inputs: &Inputs) -> Result<
     let fw = fw::build_fw(cfg, &topo)?;
     let radios = wifi::build_radios(board, cfg)?;
     let dnsmasq_conf = dnsmasq::render_dnsmasq(cfg, &topo, &run_dir)?;
-    let netd = netd::build_netd(&net, topo.wan_dev);
+    let netd = netd::build_netd(
+        &net,
+        topo.wan_dev,
+        net::dhcp6_spec(cfg, &topo),
+        net::pd_links(&topo),
+    );
     let pppoe = pppoe::build_pppoe(cfg, topo.wan_dev)?;
 
     net.validate()?;

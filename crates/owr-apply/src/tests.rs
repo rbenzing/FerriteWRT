@@ -1248,3 +1248,89 @@ mod files {
 }
 
 mod followups;
+
+fn has_sysctl(p: &Plans, key: &str, value: &str) -> bool {
+    p.net.sysctls.contains(&(key.to_owned(), value.to_owned()))
+}
+
+#[test]
+fn wan_ipv6_runs_the_prefix_delegation_client_on_the_port_and_takes_the_isps_router() {
+    let mut cfg = with_guest(false);
+    cfg.network.wan.ipv6 = c::WanIpv6::Dhcpv6;
+    let p = plans(&cfg);
+    let client = p.netd.dhcp6.as_ref().unwrap();
+    assert_eq!(
+        (client.link.as_str(), client.identity_link.as_str()),
+        ("eth1", "eth1")
+    );
+    // the kernel must accept the ISP's router advertisements although it forwards
+    assert!(has_sysctl(&p, "net.ipv6.conf.eth1.accept_ra", "2"));
+    assert!(has_sysctl(&p, "net.ipv6.conf.all.forwarding", "1"));
+    assert!(!has_sysctl(&p, "net.ipv6.conf.default.accept_ra", "2"));
+    // br-lan is subnet 0, the guest VLAN the subnet of its id
+    let shares: Vec<(&str, u16)> = p
+        .netd
+        .pd_links
+        .iter()
+        .map(|l| (l.link.as_str(), l.subnet))
+        .collect();
+    assert_eq!(shares, [("br-lan", 0), ("br-guest", 20)]);
+    // every such bridge is advertised, with no ULA prefix here
+    let ra: Vec<(&str, Option<ipnet::Ipv6Net>)> = p
+        .netd
+        .ra
+        .iter()
+        .map(|s| (s.link.as_str(), s.prefix))
+        .collect();
+    assert_eq!(ra, [("br-lan", None), ("br-guest", None)]);
+    assert_eq!(p.pppoe, None);
+}
+
+#[test]
+fn without_wan_ipv6_no_prefix_delegation_is_planned() {
+    let p = plans(&with_guest(false));
+    assert_eq!(p.netd.dhcp6, None);
+    assert_eq!(p.netd.pd_links, Vec::new());
+    assert_eq!(p.netd.ra, Vec::new());
+    assert!(!p.net.sysctls.iter().any(|(k, _)| k.ends_with(".accept_ra")));
+}
+
+#[test]
+fn a_ula_prefix_and_a_delegated_one_share_the_advertisement_of_a_bridge() {
+    let mut cfg = defaults();
+    cfg.network.lan.ipv6 = c::LanIpv6::Ula;
+    cfg.network.wan.ipv6 = c::WanIpv6::Dhcpv6;
+    let inputs = crate::Inputs {
+        ula_prefix: Some("fd12:3456:789a::/48".parse().unwrap()),
+        ..crate::Inputs::default()
+    };
+    let p = crate::build_plans_with(&board(), &cfg, &inputs).unwrap();
+    assert_eq!(p.netd.ra.len(), 1);
+    assert_eq!(
+        p.netd.ra[0].prefix,
+        Some("fd12:3456:789a::/64".parse().unwrap())
+    );
+    assert_eq!(
+        p.netd.ra[0].dns,
+        ["fd12:3456:789a::1".parse::<std::net::Ipv6Addr>().unwrap()]
+    );
+}
+
+#[test]
+fn wan_ipv6_over_pppoe_runs_the_client_on_the_ppp_interface() {
+    let mut cfg = pppoe_cfg();
+    cfg.network.wan.ipv6 = c::WanIpv6::Dhcpv6;
+    let p = plans(&cfg);
+    let client = p.netd.dhcp6.as_ref().unwrap();
+    // the PPP interface has no hardware address: the physical port identifies the client
+    assert_eq!(
+        (client.link.as_str(), client.identity_link.as_str()),
+        ("pppoe-wan", "eth1")
+    );
+    assert!(p.pppoe.as_ref().unwrap().ipv6);
+    // the interface does not exist yet: new interfaces accept router advertisements, the
+    // LAN bridges (created from that default) are set back
+    assert!(has_sysctl(&p, "net.ipv6.conf.default.accept_ra", "2"));
+    assert!(has_sysctl(&p, "net.ipv6.conf.br-lan.accept_ra", "0"));
+    assert!(!has_sysctl(&p, "net.ipv6.conf.eth1.accept_ra", "2"));
+}

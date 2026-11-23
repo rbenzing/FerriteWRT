@@ -14,10 +14,12 @@ use std::time::{Duration, SystemTime};
 use owr_common::{Outcome, atomic_write};
 use owr_net::NetPlan;
 use owr_net::dhcp::{INFINITE_LEASE, Lease, merge_lease};
+use owr_net::dhcp6::{Dhcp6ClientSpec, INFINITE, Lease6};
 use tracing::{info, warn};
 
 use crate::dnsmasq::check_token;
 use crate::files::{FilesError, write_resolv};
+use crate::pd::{PdLink, merge_lease6};
 
 /// Mode of the persisted lease (server addresses, domain).
 const LEASE_MODE: u32 = 0o600;
@@ -140,7 +142,123 @@ pub fn publish_lease_dns(
     run_dir: &Path,
     lease: &Lease,
 ) -> Result<(bool, Option<String>), FilesError> {
-    let dns = usable_dns(&lease.dns);
+    publish_dns(run_dir, Some(lease), None)
+}
+
+// --- DHCPv6 prefix delegation ----------------------------------------------------------
+
+/// Where the delegated-prefix lease of `link` is persisted (tmpfs, like the `DHCPv4` lease).
+pub fn lease6_path(run_dir: &Path, link: &str) -> PathBuf {
+    run_dir.join(format!("lease6-{link}.json"))
+}
+
+/// Persist `lease` for `link`; `true` when the stored content changed.
+pub fn save_lease6(run_dir: &Path, link: &str, lease: &Lease6) -> Result<bool, FilesError> {
+    if !safe_link(link) {
+        return Err(invalid_input(format!("persisting lease for link {link:?}")));
+    }
+    let json = serde_json::to_vec(lease)
+        .map_err(|e| invalid_input(format!("serializing the prefix lease of {link}: {e}")))?;
+    std::fs::create_dir_all(run_dir).map_err(|source| FilesError::Io {
+        context: format!("creating {}", run_dir.display()),
+        source,
+    })?;
+    Ok(atomic_write(&lease6_path(run_dir, link), &json, LEASE_MODE)? == Outcome::Written)
+}
+
+/// Remove the persisted prefix lease of `link`; `true` when there was one.
+pub fn forget_lease6(run_dir: &Path, link: &str) -> Result<bool, FilesError> {
+    if !safe_link(link) {
+        return Err(invalid_input(format!("forgetting lease for link {link:?}")));
+    }
+    let path = lease6_path(run_dir, link);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(FilesError::Io {
+            context: format!("removing {}", path.display()),
+            source,
+        }),
+    }
+}
+
+/// Whether the delegation has run out at `now`: the shortest valid lifetime is over. A lease
+/// whose end cannot be represented is treated as expired; infinite lifetimes never expire.
+pub fn is_expired6(lease: &Lease6, now: SystemTime) -> bool {
+    let valid = lease
+        .prefixes
+        .iter()
+        .map(|p| p.valid_secs)
+        .min()
+        .unwrap_or(0);
+    if valid == INFINITE {
+        return false;
+    }
+    lease
+        .obtained_at
+        .checked_add(Duration::from_secs(u64::from(valid)))
+        .is_none_or(|end| end <= now)
+}
+
+/// The persisted prefix lease of `link`, if there is a readable one that has not expired.
+pub fn load_valid_lease6(run_dir: &Path, link: &str, now: SystemTime) -> Option<Lease6> {
+    if !safe_link(link) {
+        return None;
+    }
+    let path = lease6_path(run_dir, link);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == ErrorKind::NotFound => return None,
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "cannot read the persisted prefix lease; ignoring it");
+            return None;
+        }
+    };
+    let lease: Lease6 = match serde_json::from_slice(&bytes) {
+        Ok(lease) => lease,
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "persisted prefix lease is corrupt; ignoring it");
+            return None;
+        }
+    };
+    if is_expired6(&lease, now) {
+        info!(path = %path.display(), "persisted prefix lease has expired; ignoring it");
+        return None;
+    }
+    Some(lease)
+}
+
+/// `plan` with the persisted prefix lease merged in: the router's address on each bridge's
+/// share of the delegated prefix. Unchanged without a client or a valid persisted lease.
+pub fn with_persisted_lease6(
+    plan: &NetPlan,
+    spec: Option<&Dhcp6ClientSpec>,
+    links: &[PdLink],
+    run_dir: &Path,
+    now: SystemTime,
+) -> NetPlan {
+    let Some(spec) = spec else {
+        return plan.clone();
+    };
+    match load_valid_lease6(run_dir, &spec.link, now) {
+        Some(lease) => merge_lease6(plan, &lease, links),
+        None => plan.clone(),
+    }
+}
+
+/// Publish the DNS servers of both leases to `resolv.conf.auto`, `DHCPv4` ones first. Returns
+/// whether the file changed and a warning when neither lease carried a usable server, in which
+/// case the previous `resolv.conf.auto` is kept.
+pub fn publish_dns(
+    run_dir: &Path,
+    v4: Option<&Lease>,
+    v6: Option<&Lease6>,
+) -> Result<(bool, Option<String>), FilesError> {
+    let mut dns = v4.map_or_else(Vec::new, |l| usable_dns(&l.dns));
+    dns.extend(
+        v6.into_iter()
+            .flat_map(|l| l.dns.iter().copied().map(IpAddr::V6)),
+    );
     if dns.is_empty() {
         let msg = "lease has no usable DNS server; keeping the previous resolv.conf.auto";
         warn!("{msg}");

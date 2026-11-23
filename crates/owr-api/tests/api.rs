@@ -1168,12 +1168,13 @@ async fn upload_bundle(h: &Harness, image: &str, s: &Session) {
 
 impl Harness {
     fn uploads(&self) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(self.dir.path().join("upload"))
-            .map(|d| {
+        let mut names: Vec<String> = std::fs::read_dir(self.dir.path().join("upload")).map_or_else(
+            |_| Vec::new(),
+            |d| {
                 d.map(|e| e.unwrap().file_name().into_string().unwrap())
                     .collect()
-            })
-            .unwrap_or_default();
+            },
+        );
         names.sort();
         names
     }

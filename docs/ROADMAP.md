@@ -36,11 +36,11 @@ Done on `main` since v0.3.0-rc.1, untested on hardware:
   dnsmasq through `/etc/ppp/resolv.conf`. IPv4 only.
 
 Open:
-- WAN IPv6 (in progress): the DHCPv6 prefix-delegation client is built and tested in `owr-net`
-  (replaces the unused `odhcp6c`). The router advertisements carry delegated prefixes at runtime (lifetimes counted down from the
-  lease, deprecated on loss). Left: the apply step (global /64s on the LAN
-  bridges, `accept_ra = 2` on the WAN so the ISP's router supplies the default route, `+ipv6`
-  for pppd), IPv6 firewall rules (DHCPv6 replies and RAs in, forwarding out).
+- WAN IPv6 (in progress): the DHCPv6 prefix-delegation client (`owr-net`, replaces the unused
+  `odhcp6c`), advertisements that carry the delegated prefix, and the `owr-apply` integration
+  (/64 per bridge, `accept_ra`, `+ipv6`, persisted lease, DNS) are built and tested. Left: the
+  IPv6 firewall rules (DHCPv6 replies and the ISP's router advertisements in, LAN to WAN
+  forwarding, ICMPv6), then the docs and an rc to try it on hardware.
 - Confine `owr-api`, `owr-apply` and `owr-netd` (they need network administration and
   config writes; best done with a separate uid and narrower socket permissions).
 - Replace dnsmasq with a Rust DHCPv4 server + forwarding resolver (`owr-dns`, hickory-based).
