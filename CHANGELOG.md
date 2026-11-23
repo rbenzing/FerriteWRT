@@ -14,8 +14,9 @@ All notable changes to FerriteWRT are recorded here. The format follows
   IPv6 default gateway; a lost delegation is deprecated on the links. The kernel takes the
   WAN address and default route from the ISP's advertisements (`accept_ra = 2` on the WAN; on
   `PPPoE` a default of 2 with the LAN bridges set to 0, and `+ipv6` for pppd). Both leases'
-  DNS servers reach `resolv.conf.auto`. The firewall rules for IPv6 are still to come, so
-  this is not usable end to end yet; nothing has run against an ISP.
+  DNS servers reach `resolv.conf.auto`. The firewall already covers it (DHCPv6 replies and the
+  ISP's router advertisements in, LAN to WAN forwarding for both families, no inbound IPv6 unless
+  a rule asks for it, no IPv6 NAT); a test now pins that. Nothing has run against an ISP.
 - `owr-net`: a `DHCPv6` prefix-delegation client (`dhcp6`, socket in `linux::dhcp6`): Solicit,
   Request, Renew, Rebind with RFC 8415 timing, replies validated (status codes, prefix scope and
   length, lifetimes), delegated prefixes split into /64s. Tested on virtual time against an

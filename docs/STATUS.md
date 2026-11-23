@@ -13,18 +13,17 @@ touching a router.
   into a real kernel in CI; PPPoE WAN (pppd options, confined `pppoe-wan` service); init
   fixes for sandboxed device ioctls and for restarting a service whose config is gone.
   Dependency updates through Dependabot (`.github/dependabot.yml`, netlink crates grouped) and
-  CodeQL as an advanced-setup workflow that skips test files. WAN IPv6 is in progress: the
-  DHCPv6 prefix-delegation client, the advertisements that carry the prefix and the
-  `owr-apply` integration exist and are tested (virtual time, veth pairs); the IPv6 firewall
-  rules are the missing piece before it works end to end. CI had been red since Rust 1.100
-  (new clippy lint), fixed.
+  CodeQL as an advanced-setup workflow that skips test files. WAN IPv6 is built: the DHCPv6
+  prefix-delegation client, the advertisements that carry the prefix, the `owr-apply`
+  integration and a firewall that already served IPv6 are in and tested (virtual time, veth
+  pairs, a real-kernel ruleset load in CI); nothing has run against an ISP. CI had been red
+  since Rust 1.100 (new clippy lint) and a `cargo deny` advisory, both fixed.
 - **Waiting on the owner:** boot the v0.3.0-rc.1 initramfs image on the Flint 2 with the
   checklist below. If it works, release v0.3.0 (`docs/VERSIONING.md`); anything that
   fails is fixed and shipped as the next `-rc.N`. Optionally cut an rc.2 first so the
   boot also covers PPPoE.
-- **Next work without hardware**, in the order proposed: WAN IPv6 (DHCPv6 prefix
-  delegation, which also serves PPPoE); confine `owr-api`, `owr-apply` and `owr-netd`;
-  the rest of the open list in [ROADMAP.md](ROADMAP.md).
+- **Next work without hardware**, in the order proposed: confine `owr-api`, `owr-apply` and
+  `owr-netd`; the rest of the open list in [ROADMAP.md](ROADMAP.md).
 - **Housekeeping:** delete the dead tags `v0.1.0`/`v0.1.1` (no release behind them); add
   a "do not boot the initramfs image" note to the v0.2.0 release; the follow-ups below.
 
@@ -102,6 +101,12 @@ Procedure details (U-Boot variables, addresses) are in [BUILD.md](BUILD.md).
    `/run/ferritewrt/lease-eth1.json` holds the lease, and `/run/ferritewrt/netd.json`
    shows what it runs. With `network.lan.ipv6 = ula`, a LAN client should get an `fd..`
    address and the router's `fd..::1` as DNS server.
+   With `network.wan.ipv6 = dhcpv6` on a line that delegates a prefix: `/run/ferritewrt/
+   lease6-eth1.json` (`lease6-pppoe-wan.json` on PPPoE) holds the delegation, `br-lan` has
+   `<prefix>::1/64`, `ip -6 route` has a default route from the ISP's advertisement, a LAN client
+   gets a global address and the router as default gateway, and `ping -6` out works. The
+   journal of `owr-netd` names the first thing that is missing (no Advertise, no
+   advertisement from the ISP, a refused address).
    From v0.3.0 dnsmasq and hostapd (and pppd on a PPPoE WAN) run confined
    (`owr-init --sandbox`). If one of
    them keeps restarting, its journal (`owr` UI logs, or the console) names the refused

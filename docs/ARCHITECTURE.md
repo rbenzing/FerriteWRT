@@ -21,7 +21,7 @@ Adding a router is described in [PORTING.md](PORTING.md).
 | Wi-Fi | wifi-scripts + hostapd | **owr-wifi** renders hostapd.conf; hostapd (C) kept and supervised | hostapd rewrite is out of scope |
 | DHCPv4/DNS | dnsmasq | kept, config rendered by Rust; owr-dns (phase 2) | |
 | PPPoE WAN | netifd ppp proto + pppd | pppd (C) kept, options rendered by **owr-apply**, supervised and confined by owr-init | IPv4 only |
-| IPv6 RA/DHCPv6 | odhcpd | **owr-apply netd** (router advertisements: SLAAC prefix + RDNSS, also the delegated prefix; no DHCPv6 server), also runs the WAN DHCPv4 and DHCPv6-PD clients of **owr-net** | WAN IPv6 works up to the firewall rules (phase 2) |
+| IPv6 RA/DHCPv6 | odhcpd | **owr-apply netd** (router advertisements: SLAAC prefix + RDNSS, also the delegated prefix; no DHCPv6 server), also runs the WAN DHCPv4 and DHCPv6-PD clients of **owr-net** | WAN IPv6 (prefix delegation) is built, untested on hardware |
 | Web UI + API | uhttpd + LuCI (Lua/JS) + rpcd ACLs | **owr-api** (axum, rustls, argon2id, RBAC, CSRF) + embedded static UI | |
 | Logging | logd/ubox | owr-init journal (bounded ring buffer + persistent) | |
 | Storage/mounts | fstools (block, mount_root) | owr-init mounts (squashfs rootfs + f2fs/ext4 overlay on a GPT partition) | UBI is planned |

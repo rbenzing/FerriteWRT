@@ -1334,3 +1334,92 @@ fn wan_ipv6_over_pppoe_runs_the_client_on_the_ppp_interface() {
     assert!(has_sysctl(&p, "net.ipv6.conf.br-lan.accept_ra", "0"));
     assert!(!has_sysctl(&p, "net.ipv6.conf.eth1.accept_ra", "2"));
 }
+
+/// The text of chain `name` of a rendered ruleset.
+fn chain_text<'a>(nft: &'a str, name: &str) -> &'a str {
+    let head = format!("  chain {name} {{\n");
+    let rest = nft.split_once(&head).unwrap().1;
+    rest.split_once("\n  }").unwrap().0
+}
+
+/// Nothing in the firewall depends on `wan.ipv6`: the rules a delegated prefix needs are always
+/// there, and `scripts/check-nft.sh` loads them into a real kernel. These checks keep them from
+/// being lost.
+#[test]
+fn the_ruleset_already_serves_wan_ipv6_for_the_port_and_for_pppoe() {
+    for (cfg, wan_ifaces) in [
+        (
+            {
+                let mut c = with_guest(true);
+                c.network.wan.ipv6 = c::WanIpv6::Dhcpv6;
+                c
+            },
+            r#"iifname { "eth1" }"#,
+        ),
+        (
+            {
+                let mut c = pppoe_cfg();
+                c.network.wan.ipv6 = c::WanIpv6::Dhcpv6;
+                c
+            },
+            r#"iifname { "eth1", "pppoe-wan" }"#,
+        ),
+    ] {
+        let p = plans(&cfg);
+        let nft = f::render(&p.fw).unwrap();
+        let input = chain_text(&nft, "input");
+        assert!(
+            input.contains(&format!("{wan_ifaces} jump input_wan")),
+            "{input}"
+        );
+
+        // what the ISP sends us: the DHCPv6 reply to our link-local address, router
+        // advertisements, neighbour discovery and the ICMPv6 errors path MTU discovery needs
+        let wan = chain_text(&nft, "input_wan");
+        assert!(
+            wan.contains("ip6 daddr fe80::/10 udp dport 546 accept"),
+            "{wan}"
+        );
+        for icmp in [
+            "nd-router-advert",
+            "nd-neighbor-solicit",
+            "nd-neighbor-advert",
+            "packet-too-big",
+        ] {
+            assert!(
+                wan.lines()
+                    .any(|l| l.contains("icmpv6 type {") && l.contains(icmp)),
+                "{icmp} missing in {wan}"
+            );
+        }
+        assert!(
+            wan.trim_end().ends_with("drop"),
+            "everything else is dropped: {wan}"
+        );
+
+        // out to the Internet for both families, in only for what the LAN asked for
+        let lan = chain_text(&nft, "forward_lan");
+        let out_accept = lan.lines().any(|l| {
+            l.trim().starts_with("oifname {")
+                && l.trim().ends_with("accept")
+                && !l.contains("nfproto")
+        });
+        assert!(out_accept, "no family qualifier on LAN to WAN: {lan}");
+        let inbound = chain_text(&nft, "forward_wan");
+        assert!(inbound.trim_end().ends_with("drop"), "{inbound}");
+        assert!(
+            !inbound.contains("ip6 daddr"),
+            "no inbound IPv6 pinholes by default: {inbound}"
+        );
+        assert!(chain_text(&nft, "forward").contains("ct state established,related accept"));
+
+        // IPv6 is routed, not translated
+        let post = chain_text(&nft, "postrouting");
+        assert!(
+            post.lines()
+                .filter(|l| l.contains("masquerade"))
+                .all(|l| l.contains("meta nfproto ipv4")),
+            "{post}"
+        );
+    }
+}

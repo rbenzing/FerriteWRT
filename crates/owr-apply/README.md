@@ -151,10 +151,15 @@ broadcast) to `resolv.conf.auto`; a lease without any keeps the previous file (w
 - **netd and apply race**: a lease converge in `netd` and an `apply` from the API can overlap.
   `netd` reloads the config for every lease event, and the API restarts `owr-netd` when
   `netd.json` changes, so both converge toward the saved config.
-- **WAN IPv6 needs the firewall rules** that are still to come: the `DHCPv6` replies and the ISP's
-  router advertisements arrive on the WAN as input, and forwarding between the LAN and the WAN
-  is IPv4 only in the rulesets, so until then the prefix is delegated and advertised but not
-  usable end to end. Not run against an ISP yet (also not over `PPPoE`).
+- **WAN IPv6 is not proven against an ISP** (nor over `PPPoE`). The firewall needs nothing for
+  it (`wan.ipv6` does not change a ruleset): the DHCPv6 reply and the ISP's router
+  advertisements are accepted on the WAN, LAN to WAN is forwarded for both families, nothing
+  comes in unasked, and only IPv4 is translated. `the_ruleset_already_serves_wan_ipv6_*` pins it.
+- Over `PPPoE` pppd's sandbox was written for IPv4. Its seccomp filter denies syscalls, not
+  socket families, and it keeps `NET_ADMIN`, so IPv6 sockets and addresses should work; whether
+  IPv6CP writes anything below `/proc` that Landlock refuses is only known on hardware (the
+  journal names a refused file; `touch /etc/ferritewrt/sandbox.off` confirms the sandbox as the
+  cause).
 - The WAN address is the kernel's SLAAC address from the ISP's advertisement (no `IA_NA`); an ISP
   that requires a `DHCPv6` address is not served.
 - Hostapd configs of radios removed from the config stay in `/run` until reboot; the supervisor
