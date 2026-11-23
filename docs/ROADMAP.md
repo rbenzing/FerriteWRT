@@ -30,10 +30,10 @@ Done in v0.3.0-rc.1 (pre-release), untested on hardware:
   /64) and the WAN DHCPv4 client, which until then no process started. No DHCPv6 server:
   RDNSS covers DNS for current Windows, macOS, iOS, Android and Linux clients.
 
-Done on `main` since v0.3.0-rc.1, untested on hardware:
+Done in v0.3.0-rc.2 (pre-release), untested on hardware:
 - PPPoE WAN: `owr-apply` renders pppd's options (0600) and the firewall's WAN zone covers
   `pppoe-wan`; owr-init runs pppd confined (`pppoe-wan`), the ISP's DNS servers reach
-  dnsmasq through `/etc/ppp/resolv.conf`. IPv4 only.
+  dnsmasq through `/etc/ppp/resolv.conf`. IPv6 over it is WAN IPv6 below.
 
 Open:
 - WAN IPv6 (done, untested on hardware): the DHCPv6 prefix-delegation client (`owr-net`,
