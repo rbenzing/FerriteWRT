@@ -22,8 +22,9 @@ touching a router.
   checklist below. If it works, release v0.3.0 (`docs/VERSIONING.md`); anything that
   fails is fixed and shipped as the next `-rc.N`. Optionally cut an rc.2 first so the
   boot also covers PPPoE.
-- **Next work without hardware**, in the order proposed: confine `owr-api`, `owr-apply` and
-  `owr-netd`; the rest of the open list in [ROADMAP.md](ROADMAP.md).
+- **Next work without hardware**: little is left that can be proven without a router. Confining
+  `owr-api` needs privilege separation first (ROADMAP, phase 2); the rest of the open list is
+  large (a Rust DHCP/DNS server, PIE binaries, dropping busybox) or hardware-bound.
 - **Housekeeping:** delete the dead tags `v0.1.0`/`v0.1.1` (no release behind them); add
   a "do not boot the initramfs image" note to the v0.2.0 release; the follow-ups below.
 

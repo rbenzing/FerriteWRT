@@ -41,8 +41,14 @@ Open:
   `owr-apply` integration (a /64 per bridge, `accept_ra`, `+ipv6`, persisted lease, DNS) and
   the firewall, which already served IPv6 (a test pins it). Left: an rc to try it on hardware,
   and `IA_NA` for an ISP that insists on a DHCPv6 address (the WAN address is SLAAC today).
-- Confine `owr-api`, `owr-apply` and `owr-netd` (they need network administration and
-  config writes; best done with a separate uid and narrower socket permissions).
+- Confine `owr-api`, `owr-apply` and `owr-netd`. Not a profile away: `owr-api` runs
+  `owr_apply::run::apply_all` in its own process, so the HTTPS server itself holds `NET_ADMIN`,
+  runs `nft`, writes sysctls, sets the hostname and owns the whole config store, and
+  `owr-apply` needs `SYS_ADMIN` for the hostname. Confining `owr-api` therefore starts with
+  privilege separation (an unprivileged API that writes the config and asks a privileged applier
+  service over a socket with a narrow protocol). `owr-netd` alone could get a profile once the
+  sandbox can read the config directory and create files in the run directory. Neither can be
+  proven without a router, so this waits for the first hardware boot.
 - Replace dnsmasq with a Rust DHCPv4 server + forwarding resolver (`owr-dns`, hickory-based).
 - Position-independent Rust binaries: rustc does not link static-PIE for
   `aarch64-unknown-linux-musl`, so build them inside the image build as dynamic PIEs against
