@@ -24,7 +24,8 @@ touching a router.
   boot also covers PPPoE.
 - **Next work without hardware**: little is left that can be proven without a router. Confining
   `owr-api` needs privilege separation first (ROADMAP, phase 2); the rest of the open list is
-  large (a Rust DHCP/DNS server, dropping busybox) or hardware-bound.
+  large (a Rust DHCP/DNS server) or hardware-bound; the image-build items left (busybox trim,
+  no procd/ubus) were audited and wait for a router (ROADMAP).
 - **Housekeeping:** delete the dead tags `v0.1.0`/`v0.1.1` (no release behind them); add
   a "do not boot the initramfs image" note to the v0.2.0 release; the follow-ups below.
 

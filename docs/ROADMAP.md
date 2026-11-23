@@ -55,9 +55,21 @@ Open:
   sandbox can read the config directory and create files in the run directory. Neither can be
   proven without a router, so this waits for the first hardware boot.
 - Replace dnsmasq with a Rust DHCPv4 server + forwarding resolver (`owr-dns`, hickory-based).
-- Drop busybox from the production image (rescue shell only in initramfs image).
+- Drop busybox from the production image (rescue shell only in initramfs image). Audited, not
+  done: the Rust code runs only `nft`, `mkfs.f2fs`/`mkfs.ext4`, `kmodloader` and the rescue
+  `/bin/sh`, and OpenWrt's initramfs `/init` needs ash, `mount`, `cp`, `mkdir` and `switch_root`,
+  so the keep-list is short. But the trim is a long list of applets to switch off in the
+  diffconfig and a wrong entry is a boot failure that no build can catch; do it with a router
+  at hand (with `setsid`, which the rescue console wrapper uses, kept).
 - Optional SSH via `russh`, key-only.
-- Patch OpenWrt `base-files` so procd/ubus/uci are not installed at all.
+- Patch OpenWrt `base-files` so procd/ubus/uci are not installed at all. Audited, not done:
+  `base-files` hard-depends on `netifd`, `jsonfilter`, `procd`, `ucode`, `fstools` and `fwtool`;
+  `dnsmasq` is compiled with `-DHAVE_UBUS` (+libubus) and `hostapd`/`wpad` are built against
+  `ucode` and `ucode-mod-ubus/nl80211/rtnl/uloop` (+libubus, +libblobmsg-json). Dropping them
+  means patching those three Makefiles and the hostapd/dnsmasq build options, and `ubox` must
+  stay for `kmodloader`. The packages are inert (owr-init is PID 1, nothing starts procd), so the
+  gain is files not running code; the check that proves it is a full image build, and that the
+  daemons still start is hardware.
 
 ## Phase 3: nf_tables over netlink, more boards
 - Pure-Rust nf_tables netlink applier (remove the `nft` binary).
