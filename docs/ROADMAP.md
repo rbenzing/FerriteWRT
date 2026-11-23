@@ -35,6 +35,11 @@ Done in v0.3.0-rc.2 (pre-release), untested on hardware:
   `pppoe-wan`; owr-init runs pppd confined (`pppoe-wan`), the ISP's DNS servers reach
   dnsmasq through `/etc/ppp/resolv.conf`. IPv6 over it is WAN IPv6 below.
 
+Done on `main` since v0.3.0-rc.2:
+- Position-independent Rust binaries: static-PIE through `build/pie/rust-lld` in the CI cross
+  job and the image build, checked by `scripts/check-binaries.sh` (ELF, no needed libraries,
+  hardening) and started under qemu-user. Not run on the router yet.
+
 Open:
 - WAN IPv6 (done, untested on hardware): the DHCPv6 prefix-delegation client (`owr-net`,
   replaces the unused `odhcp6c`), advertisements that carry the delegated prefix, the
@@ -50,9 +55,6 @@ Open:
   sandbox can read the config directory and create files in the run directory. Neither can be
   proven without a router, so this waits for the first hardware boot.
 - Replace dnsmasq with a Rust DHCPv4 server + forwarding resolver (`owr-dns`, hickory-based).
-- Position-independent Rust binaries: rustc does not link static-PIE for
-  `aarch64-unknown-linux-musl`, so build them inside the image build as dynamic PIEs against
-  the image's musl (see STATUS.md).
 - Drop busybox from the production image (rescue shell only in initramfs image).
 - Optional SSH via `russh`, key-only.
 - Patch OpenWrt `base-files` so procd/ubus/uci are not installed at all.

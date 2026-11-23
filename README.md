@@ -187,7 +187,7 @@ ruleset loads into a real kernel in CI, and the UI is verified in a browser. The
 stable release is v0.2.1; v0.3.0-rc.2 is the pre-release for the first hardware boot, and
 v0.3.0 follows once it works. **Not yet flashed to hardware.** Still open: confining the
 management API (it needs privilege separation first), a Rust DHCP/DNS server in place of
-dnsmasq, and position-independent binaries. The hand-off state and the next hardware
+dnsmasq, and dropping busybox. The hand-off state and the next hardware
 session are in
 [docs/STATUS.md](docs/STATUS.md); what comes after in [docs/ROADMAP.md](docs/ROADMAP.md).
 

@@ -66,8 +66,12 @@ jobs:
           echo "no inline code"
 
   cross:
-    name: router binaries (aarch64 musl, static)
+    name: router binaries (aarch64 musl, static-PIE)
     runs-on: ubuntu-24.04
+    env:
+      # build/pie/rust-lld links a static-PIE (rustc does not for this target). Job-wide so the
+      # cache key of rust-cache covers it: cargo does not fingerprint the linker.
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ github.workspace }}/build/pie/rust-lld
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -75,16 +79,14 @@ jobs:
           targets: aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked --target aarch64-unknown-linux-musl -- -D warnings
-      - run: cargo build --release --locked --target aarch64-unknown-linux-musl --workspace
-      - name: verify static, no dynamic deps, non-executable stack
+      - name: build the router binaries (relinked: cached ones may not be PIE)
         run: |
-          sudo apt-get install -y -qq binutils-aarch64-linux-gnu
-          for b in owr-init owr-api owr-apply owr; do
-            f=target/aarch64-unknown-linux-musl/release/$b
-            echo "== $f"; file "$f"
-            if aarch64-linux-gnu-readelf -d "$f" | grep -q NEEDED; then echo "dynamic deps found"; exit 1; fi
-            if aarch64-linux-gnu-readelf -lW "$f" | grep GNU_STACK | grep -q RWE; then echo "executable stack"; exit 1; fi
-          done
+          rm -f target/aarch64-unknown-linux-musl/release/{owr-init,owr-api,owr-apply,owr}
+          cargo build --release --locked --target aarch64-unknown-linux-musl --workspace
+      - name: verify static-PIE, no dynamic deps, hardened, and start each binary under qemu
+        run: |
+          sudo apt-get install -y -qq binutils-aarch64-linux-gnu qemu-user
+          scripts/check-binaries.sh target/aarch64-unknown-linux-musl/release --run
       - uses: actions/upload-artifact@v7
         with:
           name: owr-aarch64

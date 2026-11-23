@@ -6,6 +6,16 @@ All notable changes to FerriteWRT are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Position-independent router binaries: the aarch64 Rust binaries are static-PIE (ASLR for the
+  executable itself, still no dynamic dependencies). rustc links this target as a fixed-address
+  executable, so CI and the image build link through `build/pie/rust-lld`, which gives `rust-lld`
+  the static-PIE line the x86_64 target uses. `scripts/check-binaries.sh` checks every build (ELF
+  type and program headers, no needed libraries, RELRO, `now`, no executable stack) and starts each
+  binary under `qemu-aarch64`, which runs the self-relocating start-up for real; the image build
+  runs it again on the binaries inside the rootfs. The CI job is renamed "router binaries
+  (aarch64 musl, static-PIE)". Not run on the router yet.
+
 ## [0.3.0-rc.2] - 2026-11-23
 
 ### Added

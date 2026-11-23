@@ -1,6 +1,8 @@
-# Cross-compilation for the router (aarch64, static musl, no C toolchain needed). PIE is
-# requested, but rustc 1.99 links aarch64 musl as a fixed-address static executable (its target
-# spec lacks static-PIE support; see docs/STATUS.md, "Binary hardening note").
+# Cross-compilation for the router (aarch64, static musl, no C toolchain needed). The binaries
+# that ship (CI "router binaries" job, build/build-image.sh) are static-PIE: rustc links this
+# target as a fixed-address executable, so those builds use build/pie/rust-lld as the linker
+# (CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER; see docs/STATUS.md, "Binary hardening").
+# A plain `cargo xbuild` here is still fixed-address, which is fine for development.
 # Only pure-Rust dependencies are allowed in the dependency graph of target binaries.
 [target.aarch64-unknown-linux-musl]
 linker = "rust-lld"

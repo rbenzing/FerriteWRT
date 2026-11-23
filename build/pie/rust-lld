@@ -1,0 +1,61 @@
+#!/bin/sh
+# Linker for the router binaries: turns rustc's static link of aarch64-unknown-linux-musl into
+# a static-PIE (ASLR for the executable itself, still no dynamic dependencies).
+#
+# Why: rustc's target spec for aarch64-unknown-linux-musl does not enable
+# static-position-independent-executables (x86_64-unknown-linux-musl does), so even with
+# `-C relocation-model=pie` it links a fixed-address ET_EXEC. The toolchain ships musl's
+# static-PIE start file (rcrt1.o), so the same link line the x86_64 target uses works here:
+#
+#   crt1.o crtbegin.o ... -static ... crtend.o      (what rustc passes)
+#   rcrt1.o crtbeginS.o ... -static -pie --no-dynamic-linker -z text ... crtendS.o
+#
+# Use it as the target's linker; the file name must stay "rust-lld" because rustc picks the
+# argument style (and adds `-flavor gnu`) from it:
+#
+#   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=$PWD/build/pie/rust-lld cargo build ...
+#
+# If rustc ever links static-PIE itself (rcrt1.o or -pie already on the line) this passes the
+# arguments through unchanged. OWR_REAL_LLD overrides where the real rust-lld is looked for.
+set -eu
+
+for a in "$@"; do
+  case $a in
+    @*) echo "pie linker: response files are not supported ($a)" >&2; exit 1 ;;
+    rcrt1.o | */rcrt1.o | *\\rcrt1.o | -pie | --pie) exec_real=pass ;;
+  esac
+done
+
+real=${OWR_REAL_LLD:-}
+if [ -z "$real" ]; then
+  sysroot=$(rustc --print sysroot)
+  host=$(rustc -vV | sed -n 's/^host: //p')
+  real="$sysroot/lib/rustlib/$host/bin/rust-lld"
+fi
+[ -x "$real" ] || [ -f "$real" ] || { echo "pie linker: rust-lld not found at $real" >&2; exit 1; }
+
+if [ "${exec_real:-}" = pass ]; then
+  exec "$real" "$@"
+fi
+
+count=$#
+statics=0
+while [ "$count" -gt 0 ]; do
+  a=$1
+  shift
+  count=$((count - 1))
+  case $a in
+    crt1.o | */crt1.o | *\\crt1.o) set -- "$@" "${a%crt1.o}rcrt1.o" ;;
+    crtbegin.o | */crtbegin.o | *\\crtbegin.o) set -- "$@" "${a%crtbegin.o}crtbeginS.o" ;;
+    crtend.o | */crtend.o | *\\crtend.o) set -- "$@" "${a%crtend.o}crtendS.o" ;;
+    -static)
+      statics=$((statics + 1))
+      set -- "$@" -static -pie --no-dynamic-linker -z text
+      ;;
+    *) set -- "$@" "$a" ;;
+  esac
+done
+# A link that is not a static one (build scripts, proc macros run on the host and never reach
+# this linker; a dynamic target binary would) is left to fail loudly rather than be changed.
+[ "$statics" -eq 1 ] || { echo "pie linker: expected exactly one -static, saw $statics" >&2; exit 1; }
+exec "$real" "$@"

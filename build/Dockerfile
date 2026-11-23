@@ -19,7 +19,7 @@ RUN apt-get update \
       bc bison build-essential bzip2 ca-certificates clang curl diffutils file flex g++ \
       gawk gettext git libelf-dev libgnutls28-dev libncurses-dev libssl-dev patch perl \
       pkg-config python3 python3-dev python3-pyelftools python3-setuptools rsync swig \
-      time unzip uuid-dev wget xz-utils zlib1g-dev zstd \
+      qemu-user time unzip uuid-dev wget xz-utils zlib1g-dev zstd \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*'
 

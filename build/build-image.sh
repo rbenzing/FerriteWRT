@@ -180,6 +180,15 @@ build_rust() {
   # revision rebuilds the crates that embed it and nothing else.
   # The 'xbuild' alias in .cargo/config.toml is: build --release --target
   # aarch64-unknown-linux-musl --workspace --exclude owr-xtask
+  # Static-PIE: rustc links this target as a fixed-address executable, so the link goes through
+  # build/pie/rust-lld (see there). Installed under OUT_DIR so the executable bit does not depend
+  # on the bind mount; cargo does not fingerprint the linker, so binaries built earlier are
+  # removed to force the relink.
+  rm -rf "${OUT_DIR:?}/pie"
+  install -D -m 0755 "$SCRIPT_DIR/pie/rust-lld" "$OUT_DIR/pie/rust-lld"
+  local linker_var="CARGO_TARGET_$(printf '%s' "$RUST_TARGET" | tr 'a-z-' 'A-Z_')_LINKER"
+  export "$linker_var=$OUT_DIR/pie/rust-lld"
+  rm -f "${CARGO_TARGET_DIR:-$REPO_ROOT/target}/$RUST_TARGET/release"/{owr-init,owr-api,owr-apply,owr}
   (cd "$REPO_ROOT" && OWR_VERSION="$VERSION" OWR_BUILD="$OWR_BUILD_ID" cargo xbuild --locked)
   # Release tooling (owr release manifest/sums) runs on the build host, not on the router.
   log "building the host owr (release tooling)"
@@ -194,10 +203,9 @@ build_rust() {
     [ -f "$rel/$b" ] || die "workspace did not produce $rel/$b"
     install -m 0755 "$rel/$b" "$OUT_DIR/bin/$b"
   done
-  for b in "$OUT_DIR"/bin/*; do
-    file -b "$b" | grep -q 'ARM aarch64' || die "$b is not an aarch64 binary: $(file -b "$b")"
-    file -b "$b" | grep -Eq 'statically linked|static-pie' || die "$b is not statically linked: $(file -b "$b")"
-  done
+  # aarch64, static-PIE, no needed libraries, hardened; and each one starts under qemu-user,
+  # which runs the static-PIE start-up (self-relocation) for real.
+  bash "$REPO_ROOT/scripts/check-binaries.sh" "$OUT_DIR/bin" --run || die "the router binaries failed scripts/check-binaries.sh"
 }
 
 # Staged tree = overlay + binaries + sbin/init symlink + board descriptor. Rebuilt from
@@ -337,6 +345,10 @@ verify_rootfs() {
     [ -x "$root/sbin/$b" ] || die "$root/sbin/$b missing"
   done
   [ -f "$root/etc/ferritewrt/board.toml" ] || die "$root/etc/ferritewrt/board.toml missing"
+  # The binaries that are in the image, not the ones that were built: static-PIE, hardened, and
+  # each one starts under qemu-user.
+  bash "$REPO_ROOT/scripts/check-binaries.sh" "$root/sbin" --run \
+    || die "the router binaries in the image rootfs failed scripts/check-binaries.sh"
   cmp -s "$root/usr/share/ferritewrt/release.pub" "$REPO_ROOT/keys/release.pub" \
     || die "$root/usr/share/ferritewrt/release.pub missing or not keys/release.pub"
   [ "$(readlink "$root/etc/ppp/resolv.conf" || true)" = "$PPP_RESOLV_TARGET" ] \

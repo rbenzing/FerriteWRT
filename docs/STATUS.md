@@ -24,7 +24,7 @@ touching a router.
   boot also covers PPPoE.
 - **Next work without hardware**: little is left that can be proven without a router. Confining
   `owr-api` needs privilege separation first (ROADMAP, phase 2); the rest of the open list is
-  large (a Rust DHCP/DNS server, PIE binaries, dropping busybox) or hardware-bound.
+  large (a Rust DHCP/DNS server, dropping busybox) or hardware-bound.
 - **Housekeeping:** delete the dead tags `v0.1.0`/`v0.1.1` (no release behind them); add
   a "do not boot the initramfs image" note to the v0.2.0 release; the follow-ups below.
 
@@ -44,7 +44,7 @@ touching a router.
 | Web UI | Driven in Chromium via Playwright against the mock backend: setup wizard, dashboard, network, wireless pages |
 | Mapping + apply orchestration (`owr-apply`) | Snapshot tests for nft/hostapd/dnsmasq output; apply step order host-tested |
 | Network daemon (`owr-apply netd`) | Router advertisements checked byte for byte over a veth pair on Linux (WSL), including the rate-limited answer to a solicitation; shutdown on SIGTERM tested; the DHCP lease hand-off reuses the apply path |
-| Cross-compilation | Every binary builds as a static executable for `aarch64-unknown-linux-musl` with no C toolchain (not PIE, see below) |
+| Cross-compilation | Every binary builds as a static-PIE executable for `aarch64-unknown-linux-musl` with no C toolchain; CI checks the ELF and starts each one under qemu-user (see "Binary hardening") |
 | OpenWrt image build | Runs in the release workflow (Docker); kernel and package config checked line by line; every board's config checked on each push |
 | Releases | v0.2.0, v0.2.1 and the pre-release v0.3.0-rc.1 published by the release workflow: factory, sysupgrade and initramfs images, `SHA256SUMS` signed with the release key, provenance attestations. Boot v0.3.0-rc.1 first (see below); v0.3.0 is tagged once it works |
 | Dependency policy | `cargo deny check` clean: no C/asm crates, permissive licenses, no advisories |
@@ -130,16 +130,17 @@ patch release.
   writes on the eMMC, `mlockall` under the running rootfs, and the GL.iNet U-Boot accepting
   the kernel written this way.
 
-## Binary hardening note
+## Binary hardening
 
-The router binaries are static musl executables (no dynamic dependencies, RELRO/NOW
-and non-executable stack flags applied) but **not** position-independent. rustc 1.99's
-`aarch64-unknown-linux-musl` target spec does not enable
-`static-position-independent-executables` (the x86_64 musl target does, and `rcrt1.o` is
-shipped), so `-C relocation-model=pie` with `+crt-static` links a fixed-address
-`ET_EXEC`. Stable rustc has no switch to override the target spec. Follow-up: build the
-Rust binaries inside `build/build-image.sh` with the OpenWrt toolchain as linker,
-`-C target-feature=-crt-static` and `-L <staging_dir>/lib`, so they become dynamic PIEs
-linked against the image's musl like every other OpenWrt userspace binary; or switch to
-static-PIE once rustc enables it for this target (the `.cargo/config.toml` flags already
-ask for it).
+The router binaries are **static-PIE** musl executables: no dynamic dependencies, position
+independent (ASLR for the executable itself), RELRO, immediate binding and a non-executable
+stack. rustc's target spec for `aarch64-unknown-linux-musl` does not enable
+`static-position-independent-executables` (the x86_64 musl target does), so a plain build links
+a fixed-address `ET_EXEC`. The CI "router binaries" job and `build/build-image.sh` link through
+`build/pie/rust-lld`, a wrapper that gives `rust-lld` the line the x86_64 target uses
+(`rcrt1.o`, `crtbeginS.o`, `-static -pie --no-dynamic-linker`; it passes through unchanged if
+rustc ever does this itself). Every such build runs `scripts/check-binaries.sh`: the ELF type
+and program headers, no needed libraries, RELRO and `now`, and each binary started with `--help`
+under `qemu-aarch64` (the static-PIE start-up relocates the binary itself, so a wrongly linked
+one dies there). The image build runs it again on the binaries inside the finished rootfs. A
+plain local `cargo xbuild` is still a fixed-address executable. Not run on the router yet.

@@ -25,7 +25,7 @@ dirs), `ferritewrt-cargo` and `ferritewrt-target`. The OpenWrt revision is pinne
 `--openwrt-rev`/`--openwrt-repo`. `docker volume rm` the three volumes to start clean.
 
 `build/build-image.sh` then: checks out OpenWrt at the pin; cross-builds the Rust workspace
-(`cargo xbuild`, aarch64-unknown-linux-musl, static, not PIE: see `STATUS.md`); stages `build/rootfs-overlay/` +
+(aarch64-unknown-linux-musl, static-PIE through `build/pie/rust-lld`, checked by `scripts/check-binaries.sh` incl. a start under qemu-user: see `STATUS.md`); stages `build/rootfs-overlay/` +
 binaries + `sbin/init -> owr-init` + `boards/<board>.toml`; expands
 `build/openwrt/common.diffconfig` followed by `build/openwrt/<board>.diffconfig` and **fails
 if any line did not stick**; installs the kernel fragments (`kernel-config.fragment`, then
